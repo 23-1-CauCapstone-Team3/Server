@@ -2,11 +2,10 @@
   "name": "server",
   "version": "1.0.0",
   "description": "- `master` : 정식 배포용\r - `develop` : 다음 버전 개발용\r     - `master`에서 분기, 작업 후 `master`로 병합\r - `feature/기능명` : 특정 기능 개발용\r     - `develop`에서 분기, 작업 후 `develop`으로 병합\r - `hotfix` : `master` 브랜치의 오류 수정용\r     - `master`에서 분기, 작업 후 `master`로 병합",
-  "main": "index.js",
+  "main": "app.js",
   "scripts": {
-    "start": "node index.js",
-    "backend": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node app.js",
+    "test": "nodemon app.js"
   },
   "repository": {
     "type": "git",
