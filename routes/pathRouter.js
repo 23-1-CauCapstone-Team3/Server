@@ -14,6 +14,13 @@ const BUS_TERM_TIME_API_KEY = process.env.BUS_TERM_TIME_API_KEY
 const BUS_STATION_API_KEY =  process.env.BUS_STATION_API_KEY
 const SUB_STATION_API_KEY = process.env.SUB_STATION_API_KEY
 
+// const day_type = {
+//   day: 1,
+//   sat: 2,
+//   sun_holiday: 3
+// }
+// Object.freeze(day_type);
+
 pathRouter.post('/', async(req, res) => {
   try{
     const time = req.query.time
@@ -28,63 +35,163 @@ pathRouter.post('/', async(req, res) => {
     
     const userTime = moment(time);
 
-    const routeResult = await axios.get(`https://api.odsay.com/v1/api/searchPubTransPathT?SX=${startX}&SY=${startY}&EX=${endX}&EY=${endY}&apiKey=${ODSAY_API_KEY}`)
+    const routeResult = await axios.get(`https://api.odsay.com/v1/api/searchPubTransPathT?SX=${startX}`+
+                                        `&SY=${startY}&EX=${endX}&EY=${endY}&apiKey=${ODSAY_API_KEY}`)
     
 
     /**
      * 경로들에 대해 막차 시간을 구하는 과정
      */
   
-    let subLatestPathTime 
-    let walkTime // 분 단위
+    const lastPaths = await Promise.all(routeResult.data.result.path.map(async (path)=>{
 
-    const latestPath = routeResult.data.result.path.map((path)=>{
-      subLatestPathTime = moment(userTime).add(1, 'd')
-
+      // 막차 시간 구하기 위해 초기에 설정한 값 클라이언트에서 준 날짜에 하루 뒤 날짜를 생성함.
+      let subLastPathTime = moment(userTime).add(1, 'd')
+      // console.log(subLastPathTime)
+    
       const subPathLength = path.subPath.length - 1
 
-      /**
+      /**getBusData
        * 각 서브 경로에 대해 막차 시간을 계산하는 구간
-       */
+      */
+
       for(let i = subPathLength; i >= 0; i--){
         if(path.subPath[i].trafficType === 3){
-          walkTime = path.subPath[i].sectionTime
-          subLatestPathTime.subtract(walkTime, 'm')
+          // subLastPathTime.subtract(path.subPath[i].sectionTime, 'm')
+          // console.log(subLastPathTime)
+          // console.log(path.subPath[i].sectionTime)
         } else if(path.subPath[i].trafficType === 2) {
-          getBusTermTime(userTime, info)
-          getBusLastTime()
+
+          const busList = await Promise.all(path.subPath[i].lane.map(async(element)=>{
+            const info = {
+              busLocalBlID: element.busLocalBlID,
+              startArsID: path.subPath[i].startArsID.replace('-',''),
+              startLocalStationID: path.subPath[i].startLocalStationID
+            }
+            result = await getBusData(userTime, info)
+            return result
+          }))
+
+          if(busList.filter(element => element).length > 0) {
+
+            const bus_data = busList.reduce((prev, now) => {
+              if(prev.time.isSameOrAfter(now.time)) {
+                return prev
+              } else {
+                return now
+              }
+            })
+            
+            const busLastTime = bus_data.time
+            
+            if(busLastTime.isSameOrBefore(subLastPathTime)){
+              subLastPathTime = busLastTime
+              subLastPathTime.subtract(path.subPath[i].sectionTime,'m')
+              subLastPathTime.subtract(bus_data.term,'m')
+            }
+          }
+
         } else {
-          getRailTimes(userTime)
+          const info = {
+            lnCd:path.subPath[i].lane[0].subwayCode,
+            startName: path.subPath[i].startName,
+            endName: path.subPath[i].endName,
+            wayCode: path.subPath[i].wayCode,
+            startID: path.subPath[i].startID,
+            endID: path.subPath[i].endID,
+          }
+
+          const timeListResults = await getRailTimes(userTime, info)
+          
+          if (timeListResults) {
+            const endStationLastRail = timeListResults.endStationTimeList.reduce((prev, now) => { 
+              if(prev.arvTm.isBefore(subLastPathTime) && prev.arvTm.isAfter(now.arvTm)) {
+                return prev
+              } else {
+                return now
+              }
+            })
+            
+            const startStationLastRail = timeListResults.startStationTimeList.filter((element)=> {
+              if(element.trnNo === endStationLastRail.trnNo) {
+                return true
+              } else{
+                return false
+              }
+            }).reduce((prev, now) => { 
+              if(prev.arvTm.isBefore(subLastPathTime) && prev.arvTm.isAfter(now.arvTm)) {
+                return prev
+              } else {
+                return now
+              }
+            })
+            subLastPathTime = startStationLastRail.arvTm
+          }
         }
       }
-
       return {
         'path': path,
-        'subLatestPathTime': subLatestPathTime
+        'subLastPathTime': subLastPathTime
       }
-    }).reduce((prev, now) => { return prev.subLatestPathTime > now.subLatestPathTime ? now : prev})
+    })
+    )
 
+    // console.log(lastPaths.reduce((prev, now) => { 
+    //   if(prev.subLastPathTime.isSameOrBefore(now.subLastPathTime)) {
+    //     return prev
+    //   } else {
+    //     return now
+    //   }
+    // }))
 
+    const lastPath = lastPaths.reduce((prev, now) => { 
+      if(prev.subLastPathTime.isSameOrBefore(now.subLastPathTime)) {
+        return prev
+      } else {
+        return now
+      }
+    })
 
     /**
      * 위에서 구한 마지막의 막차에 대한 걸리는 시간을 다시 연산하는 작업 
      */
     
-    let arrivalTime = latestPath.subLatestPathTime
+    let arrivalTime = moment(lastPath.subLastPathTime)
 
-    latestPath.path.map((path) => {
+    await Promise.all(lastPath.path.subPath.map(async (path) => {
       if(path.trafficType === 3){
         walkTime = path.sectionTime
         arrivalTime.add(walkTime, 'm')
       } else if(path.trafficType === 2) {
-        getBusTermTime(userTime, info)
-        getBusLastTime(info)
-      } else {
-        getRailTimes(userTime, info)
-      }
-    })
+        const busList = await Promise.all(path.lane.map(async(element)=>{
+          const info = {
+            busLocalBlID: element.busLocalBlID,
+            startArsID: path.startArsID.replace('-',''),
+            startLocalStationID: path.startLocalStationID
+          }
+          result = await getBusData(userTime, info)
+          return result
+        }))
 
-    return res.status(200).send(routeResult.data.result) 
+        if(busList.filter(element => element).length > 0) {
+
+          const bus_data = busList.reduce((prev, now) => {
+            if(prev.time.isSameOrAfter(now.time)) {
+              return prev
+            } else {
+              return now
+            }
+          })
+
+          arrivalTime.add(path.sectionTime,'m')
+          arrivalTime.add(bus_data.term,'m')
+        }
+      } else {
+        arrivalTime.add(path.sectionTime,'m')
+      }
+    }))
+
+    return res.status(200).send({arrivalTime: arrivalTime.format('YYYY-MM-DDTHH:mm:ss'), departureTime:lastPath.subLastPathTime.format('YYYY-MM-DDTHH:mm:ss'), pathInfo: lastPath.path}) 
 
   } catch (err) {
     console.log(err)
@@ -97,167 +204,152 @@ pathRouter.post('/', async(req, res) => {
 async function getRailTimes(userTime, info) {
 
   try{
-
-    let dayCd
     /**
      * 호선, 지하철코드, 방향 정보 info에 필요
      */
-    const lnCd = info.d
-    const station_name = info.n
-    const way_code = info.w
-    const userYYYYMMDD = userTime.format("YYYY-MM-DD")
-    const userHHmmss = userTime.format("HHmmss")
-    const dawnHHmmss = '040000'
+    const start_station_name = info.startName
+    const end_station_name= info.endName
+    const lnCd = info.lnCd
+    const wayCode = info.wayCode
+    const startID = info.startID
+    const endID = info.endID
+    let rail_type = 'G'
+    const userHHmm = userTime.format("HHmm")
+    const dawnHHmm = '0300'
 
-    const sql = `SELECT rail_comp_code, station_code FROM rail_info WHERE rail_line_code = '${lnCd}' AND station_name = '${station_name}';`
+    let [dayCd, transport_date] = checkDateType(userTime)
+    const DC = dayCd === 'day'? 1 : dayCd === 'sat' ? 2 : 3
+    const transportYYYYMMDD = transport_date.format("YYYY-MM-DD")
+    const afterDayTransportYYYYMMDD = moment(transport_date).add(1,'d').format('YYYY-MM-DD')
 
-    const results = await selectDataWithQuery(sql) 
+    if(start_station_name.includes('급행')||start_station_name.includes('특급')){
+      rail_type= 'D'
+    }
+    const startStationSQL = `SELECT 도착시간, 열차번호 FROM rail_time WHERE 외부코드 = ${startID} AND 요일 = ${DC} AND 방향 = ${wayCode} AND 급행선 = '${rail_type}';`
+    const startRailTime= await selectDataWithQuery(startStationSQL)
+    const endStationSQL = `SELECT 도착시간, 열차번호 FROM rail_time WHERE 외부코드 = ${endID} AND 요일 = ${DC} AND 방향 = ${wayCode} AND 급행선 = '${rail_type}';`
+    const endRailTime = await selectDataWithQuery(endStationSQL)
+    
+    if(startRailTime.length !== 0 && endRailTime.length !== 0) {
 
-    if(!results) {
+      const res2 = endRailTime.filter( element => {
+        return parseInt(element['도착시간'].replace(':','')) > parseInt(userHHmm)}
+        ).map((element) => {
+          timeStr = element['도착시간'].replace(':','').substr(0,4)
+          if (parseInt(timeStr) >= 2400 ){
+            const t = parseInt(timeStr) - 2400
+            return {trnNo:element['열차번호'], arvTm: moment(afterDayTransportYYYYMMDD + String(t).padStart(4, '0'), 'YYYY-MM-DDHHmm')}
+          } else {
+            return {trnNo:element['열차번호'], arvTm: moment(transportYYYYMMDD + timeStr, 'YYYY-MM-DDHHmm')}
+          }
+        })
+        
+      
+      const res1 = startRailTime.filter( element => {
+        return parseInt(element['도착시간'].replace(':','')) > parseInt(userHHmm)}
+        ).map((element) => {
+          timeStr = element['도착시간'].replace(':','').substr(0,4)
+          if (parseInt(timeStr) >= 2400 ){
+            const t = parseInt(timeStr) - 2400
+            return {trnNo:element['열차번호'], arvTm: moment(afterDayTransportYYYYMMDD + String(t).padStart(4, '0'), 'YYYY-MM-DDHHmm')}
+          } else {
+            return {trnNo:element['열차번호'], arvTm: moment(transportYYYYMMDD + timeStr, 'YYYY-MM-DDHHmm')}
+          }
+        })
+
+      return {startStationTimeList:res1, endStationTimeList:res2}
+    } else{
       return null
     }
-
-    const railOprIsttCd = results[0].rail_comp_code;
-    const stinCd = results[0].station_code;
-
-
-
-    /**
-     * 날짜 확인 필요
-     */
-
-    dayCd = userTime.day() === 0 ? 9 : userTime.day() === 6 ? 7 : 8
-
-
-    /**
-     * 지하철 시간표를 데이터만들게 되면 대부분 수정해야한다는 점을 인지
-     * 현재는 api로 2번최대 2번 받아오는 형식
-     */
-
-    if (userTime.hours() > 20 && userTime.hours() < 24){
-
-      const res1 = await axios.get(`https://openapi.kric.go.kr/openapi/convenientInfo/stationTimetable?serviceKey=${SUB_STATION_API_KEY}&format=json&railOprIsttCd=${railOprIsttCd}&lnCd=${lnCd}&stinCd=${stinCd}&dayCd=${dayCd}`)
-      
-      /**
-       * 날짜 확인 필요
-       */
-      dayCd = userTime.day() + 1 === 0 ? 9 : userTime.day() + 1 === 6 ? 7 : 8
-
-      const res2 = await axios.get(`https://openapi.kric.go.kr/openapi/convenientInfo/stationTimetable?serviceKey=${SUB_STATION_API_KEY}&format=json&railOprIsttCd=${railOprIsttCd}&lnCd=${lnCd}&stinCd=${stinCd}&dayCd=${dayCd}`)
-      
-      let results
-      if(res1.data.body && res2.data.body){
-        results = [...res1.data.body.filter((element) => { return parseInt(element.arvTm, 10) >= userHHmmss}),
-           ...res2.data.body.filter((element) => { return parseInt(element.arvTm, 10) <= dawnHHmmss})]
-      } else if (!res1.data.body && res2.data.body) {
-        results = res2.data.body.filter((element) => { return parseInt(element.arvTm, 10) <= dawnHHmmss})
-      } else if (res1.data.body && !res2.data.body) {
-        results = res1.data.body.filter((element) => { return parseInt(element.arvTm, 10) >= userHHmmss})
-      } else{
-        return null
-      }
-      
-
-      return results.map((element) => {
-            if(parseInt(element.arvTm, 10) >= userHHmmss){
-              return {
-                'arvTm': moment(userYYYYMMDD + element.arvTm, 'YYYY-MM-DDHHmmss'),
-                'tmnStinCd': element.tmnStinCd
-              }
-            } else {
-              return {
-                'arvTm': moment(userYYYYMMDD + element.arvTm, 'YYYY-MM-DDHHmmss').add(1,'d'),
-                'tmnStinCd': element.tmnStinCd
-              }
-            }
-          })
-
-    } else{
-      const results = await axios.get(`https://openapi.kric.go.kr/openapi/convenientInfo/stationTimetable?serviceKey=${SUB_STATION_API_KEY}&format=json&railOprIsttCd=${railOprIsttCd}&lnCd=${lnCd}&stinCd=${stinCd}&dayCd=${dayCd}`)
-      
-      if(!results.data.body) {
-        return null
-      }
-
-      return results.data.body.filter((element)=>{
-        return parseInt(element.arvTm ,10) <= dawnHHmmss && parseInt(element.arvTm ,10) >= userHHmmss
-      }).map((element) => ({
-        'arvTm': moment(userYYYYMMDD + element.arvTm, 'YYYY-MM-DDHHmmss'),
-        'tmnStinCd': element.tmnStinCd
-      }))
-    }
+    
   } catch(err){
     console.log(err)
     throw(err)
   } 
 }
 
-async function getBusTermTime(userTime, info){
+async function getBusData(userTime, info){
   try {
+
+    const arsID = info.startArsID
+    const busRouteID = info.busLocalBlID
+
+    const [day_type, transport_date] = checkDateType(userTime)
+
+    const sql = `SELECT ${day_type} FROM bus_term WHERE route_id = ${busRouteID};`
+
+    const term_result = await selectDataWithQuery(sql) 
+
+    if(term_result.length !== 1){
+      return null
+    } 
+
     /**
-     * 버스 아이디필요
-     * 날짜 확인 필요
-     */
-    const bus_ID = info.i
+     *  버스 경로에 대한 막차 시간 데이터를 얻게 되면 다시 수정해야함 sql 형태로 
+    */
+    const time_result = await axios.get(`http://ws.bus.go.kr/api/rest/stationinfo/getBustimeByStation?ServiceKey=${BUS_STATION_API_KEY}&arsId=${arsID}&busRouteId=${busRouteID}&resultType=json`)
+   
+    if(time_result.data.msgBody.itemList.length !== 1){
+      return null
+    } 
 
-    const day_type =  userTime.day() === 0 ? 'sun_holiday' : userTime.day() === 6 ? 'sat' : 'day'
-    
-    /**
-     * 배차 간격 데이터를 만들게 되면 수정해야하는 곳
-     */
-    const sql = `SELECT ${day_type} FROM bus_term WHERE route_id = ${bus_ID};`
+    if(!time_result.data.msgBody.itemList[0].lastBusTm) {
+      return null
+    }
 
-    const result = await selectDataWithQuery(sql) 
+    if(parseInt(time_result.data.msgBody.itemList[0].lastBusTm) < 40000 ){
+      return {term: term_result[0][day_type], time: moment(transport_date.format('YYYY-MM-DD')+time_result.data.msgBody.itemList[0].lastBusTm, 'YYYY-MM-DDHHmmss').add(1, 'd')}
+    } else if(parseInt(time_result.data.msgBody.itemList[0].lastBusTm) > parseInt(userTime.format('HHmmss')) ) {
+      return {term: term_result[0][day_type], time: moment(transport_date.format('YYYY-MM-DD')+time_result.data.msgBody.itemList[0].lastBusTm, 'YYYY-MM-DDHHmmss')}
+    } else {
+      return null
+    }
 
-    return result[0][day_type]
   } catch (err){
     console.log(err)
     throw(err)
   }
 }
 
-async function getBusLastTime(info) {
-  try{
-
-    /** 버스경로 아이디 정류장 아이디 필요 
-     *  버스 경로에 대한 막차 시간 데이터를 얻게 되면 다시 수정해야함 sql 형태로 
-    */
-    const arsID = info.arsID
-    const busRouteID = info.busRouteID
-    const result = await axios.get(`http://ws.bus.go.kr/api/rest/stationinfo/getBustimeByStation?ServiceKey=${BUS_STATION_API_KEY}&arsId=${arsID}&busRouteId=${busRouteID}&resultType=json`)
-    
-    if(result.msgBody.itemList){
-      return result.msgBody.itemList.lastBusTm
-    } else {
-      return null
-    }
-  } catch(err){
-    console.log(err)
-    throw(err)
-  }
-}
 
 async function selectDataWithQuery(sql){
 
   try{
     const conn = await mysql.getConnection()
     const [ result ] = await conn.query(sql)
+    conn.release()
     return result
   } catch (err) {
     console.log(err)
-    throw(err)
-  } finally {
     conn.release()
-  }
+    throw(err)
+  } 
 }
 
 
-async function checkHoliday(date){
+function checkDateType(userTime){
 
+  let date
   /**
-   * 공휴일을 확인하거나 그냥 날짜를 입력받으면 평일 토요일 공휴일로 구분해주도록할 함수
-   * 작성해야함
+   * 유저의 시간이 새벽 1시인 경우 버스는 그 전날의 요일이 무엇인지에 따라 배차간격등이 정해짐
+   * 그래서 요일을 확인 하기 위해서는 24시 이전과 이후를 구분해야함
+   * 새벽 4시를 기준으로 작으면 이전 날짜를 21시면 해당 날짜를 생성해 줌
    */
+  if(parseInt(userTime.format('hh')) <= 4){
+    date = moment(userTime).subtract(1,'d')
+  } else {
+    date = moment(userTime)
+  }
+
+  const day_type = date.day() === 0 ? 'sun_holiday' : date.day() === 6 ? 'sat' : 'day'
+  const solar_holiday = ['0101', '0301', '0505','0606','0815','1003','1009','1225']
+  const lunar_holiday = ['0527','0928','0929','0930']
+
+  if(solar_holiday.includes(date.format('MMDD')) || lunar_holiday.includes(date.format('MMDD'))){
+    day_type = 'sun_holiday'
+  }
+
+  return [day_type, date]
 }
 
 module.exports = {pathRouter}
