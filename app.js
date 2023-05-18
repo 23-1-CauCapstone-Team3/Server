@@ -1,22 +1,23 @@
-const express = require('express')
-const app = express()
+const express = require("express");
+const app = express();
+const { taxiPathRouter } = require("./routes/taxiPathRouter");
+const port = 3000;
 
 require("dotenv").config();
 
-const port = 3000
-
 const server = async () => {
-  try{
-      app.get('/', (req, res)=> {
-          res.send('server test')
-      })
+  try {
+    app.use(express.json());
+    app.use(express.urlencoded({ extended: true }));
 
-      app.listen(port, () => {
-          console.log(`App listening on port ${port}`)
-      })
-  } catch(error){
-      console.log(error)
+    app.use("/taxiRoute", taxiPathRouter);
+
+    app.listen(port, () => {
+      console.log(`App listening on port ${port}`);
+    });
+  } catch (error) {
+    console.log(error);
   }
-}
+};
 
-server()
+server();
