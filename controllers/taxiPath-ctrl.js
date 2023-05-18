@@ -12,12 +12,15 @@ findTaxiPath = async (req, res) => {
       maxWalking = 40,
     } = req.query;
 
+    const { startTime } = getNowTime();
+
     result = await raptorAlg({
       // startLat,
       // startLng,
       // endLat,
       // endLng,
-      // startTime,
+      startTime,
+      // weeks
       // maxTransfer,
       // maxCost,
       // maxWalking,
@@ -31,19 +34,34 @@ findTaxiPath = async (req, res) => {
   }
 };
 
-// 길찾기 raptor 알고리즘의 변형
-raptorAlg = async (
-  {
-    // startLat,
-    // startLng,
-    // endLat,
-    // endLng,
-    // startTime,
-    // maxTransfer,
-    // maxCost,
-    // maxWalking,
+getTodayInfos = () => {
+  // const now = new Date(2023, 4, 19, 21, 30, 0, 0); // 5/19 9:30PM
+  const now = new Date();
+
+  const startTime = now.getHours() * 100 + now.getMinutes();
+  const weeks = now.getDay();
+  if (startTime < 500) {
+    startTime += 2400;
+    weeks -= 1;
+    if (weeks < 0) {
+      weeks = 6;
+    }
   }
-) => {
+
+  return { startTime, weeks };
+};
+
+// 길찾기 raptor 알고리즘의 변형
+raptorAlg = async ({
+  // startLat,
+  // startLng,
+  // endLat,
+  // endLng,
+  startTime,
+  // maxTransfer,
+  // maxCost,
+  // maxWalking,
+}) => {
   // 1. 초기화
   // ** 길찾기에 필요한 input data
   // stationsByGeohash
