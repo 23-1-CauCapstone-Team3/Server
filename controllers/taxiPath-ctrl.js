@@ -1,4 +1,12 @@
 const mysql = require("../mysql/mysql");
+const geohash = require("ngeohash");
+const haversine = require("haversine");
+
+const level = 7; // geohash level
+const levelunit = 153; // 가로 세로 153m
+
+// 10분 = 대각선 약 700m, 가로 세로는 500m
+const walkunit = 500;
 
 findTaxiPath = async (req, res) => {
   try {
@@ -7,20 +15,17 @@ findTaxiPath = async (req, res) => {
       SY: startLat,
       EX: endLng,
       EY: endLat,
-      maxTransfer = 5,
+      maxTransfer = 4,
       maxCost = 30000,
       maxWalking = 40,
     } = req.query;
 
-    const { startTime } = getNowTime();
-
     result = await raptorAlg({
-      // startLat,
-      // startLng,
-      // endLat,
-      // endLng,
-      startTime,
-      // weeks
+      startLat,
+      startLng,
+      endLat,
+      endLng,
+      startDate: new Date(),
       // maxTransfer,
       // maxCost,
       // maxWalking,
@@ -34,30 +39,35 @@ findTaxiPath = async (req, res) => {
   }
 };
 
-getTodayInfos = () => {
-  // const now = new Date(2023, 4, 19, 21, 30, 0, 0); // 5/19 9:30PM
-  const now = new Date();
-
-  const startTime = now.getHours() * 100 + now.getMinutes();
+getTimeFromDate = (now) => {
   const weeks = now.getDay();
-  if (startTime < 500) {
-    startTime += 2400;
+  if (now.getHours() < 5) {
     weeks -= 1;
+
     if (weeks < 0) {
       weeks = 6;
     }
   }
 
-  return { startTime, weeks };
+  return weeks;
+};
+
+getWeeksFromDate = (now) => {
+  const time = now.getHours() * 100 + now.getMinutes();
+  if (time < 500) {
+    time += 2400;
+  }
+
+  return time;
 };
 
 // 길찾기 raptor 알고리즘의 변형
 raptorAlg = async ({
-  // startLat,
-  // startLng,
-  // endLat,
-  // endLng,
-  startTime,
+  startLat,
+  startLng,
+  endLat,
+  endLng,
+  startDate,
   // maxTransfer,
   // maxCost,
   // maxWalking,
@@ -89,8 +99,10 @@ raptorAlg = async ({
   //     ]
   //   ]
   // }
-  const [stationsByGeohash, { routesByStation, tripsByRoute }] =
-    await Promise.all([getEnableStationsFromDB(), getEnableRoutesFromDB()]);
+  const [
+    { stationsByGeohash, stationInfos },
+    { routesByStation, tripsByRoute },
+  ] = await Promise.all([getEnableStationsFromDB(), getEnableRoutesFromDB()]);
 
   // ** 길찾기 도중에 또는 output으로 사용될 data
   // reachedInfos
@@ -123,12 +135,11 @@ raptorAlg = async ({
   //   }
   // }
   const markedRoutes = {};
-  const { markedStations, initReachedInfo } = getInitInfos(
-    startLat,
-    startLng,
-    startTime,
-    stationsByGeohash
-  ); // 초기화 필요
+  const { markedStations, initReachedInfo } = getInitInfos({
+    startGeohash: geohash.encode(startLat, startLng),
+    startDate,
+    stationsByGeohash,
+  }); // 초기화 필요
   reachedInfos[0] = initReachedInfo;
 
   // 2. round 반복
@@ -218,7 +229,14 @@ raptorAlg = async ({
 
     // 도보 이동
     // 그냥 한/인접한 geohash에서 남은 도보 시간만큼 인접 geohash까지 이동 가능
-    getNextInfos(markedStations, reachedInfos[k], stationsByGeohash);
+    let footReachedInfo;
+    ({ markedStations, newReachedInfo: footReachedInfo } = getNextInfos({
+      markedStations,
+      reachedInfo: reachedInfos[k],
+      stationsByGeohash,
+      stationInfos,
+    }));
+    reachedInfos[k] = footReachedInfo;
 
     // 표시된 역 없는 경우 종료
     if (markedStations.size === 0) {
@@ -231,7 +249,9 @@ raptorAlg = async ({
 
 getEnableStationsFromDB = async () => {
   let conn = null;
-  let result = {};
+
+  let stationsByGeohash = {};
+  let stationInfos = {};
 
   try {
     conn = await mysql.getConnection();
@@ -254,25 +274,28 @@ getEnableStationsFromDB = async () => {
 
     // geohash별로 station id 묶기
     for (station of train[0]) {
-      if (!(station.geohash in result)) {
-        result[station.geohash] = new Set();
+      if (!(station.geohash in stationsByGeohash)) {
+        stationsByGeohash[station.geohash] = new Set();
       }
+      stationsByGeohash[station.geohash].add(station.stat_id);
 
-      result[station.geohash].add(station.stat_id);
+      stationsInfos[station.stat_id] = station;
     }
     for (station of bus[0]) {
-      if (!(station.geohash in result)) {
-        result[station.geohash] = new Set();
+      if (!(station.geohash in stationsByGeohash)) {
+        stationsByGeohash[station.geohash] = new Set();
       }
 
-      result[station.geohash].add(station.stat_id);
+      stationsByGeohash[station.geohash].add(station.stat_id);
+
+      stationsInfos[station.stat_id] = station;
     }
   } catch (err) {
     if (conn !== null) conn.release();
     console.log(err);
   }
 
-  return result;
+  return { stationsByGeohash, stationInfos };
 };
 
 getEnableRoutesFromDB = async () => {
@@ -322,9 +345,156 @@ getEnableRoutesFromDB = async () => {
 
 getNowTrip = (route, trip, station) => {};
 
-getInitInfos = (startLat, startLng, startTime, stationsByGeohash) => {};
+getInitInfos = ({ startGeohash, startDate, stationsByGeohash }) => {
+  const circleGeohash = getCircleGeohash({
+    centerGeohash: startGeohash,
+    radius: 500 * 3,
+  });
 
-getNextInfos = (martkedStations, reachedInfos, stationsByGeohash) => {};
+  const markedStations = new Set();
+  const initReachedInfos = {};
+
+  for (hash in circleGeohash) {
+    markedStations = markedStations | stationsByGeohash[hash];
+    for (station in stationsByGeohash) {
+      const arrDate = new Date(startDate);
+      arrDate.setMinutes(arrDate.getMinutes() + circleGeohash[hash] * 10);
+
+      reachedInfos[station] = {
+        arrDate,
+        walkingTime: circleGeohash[hash],
+        privStationId: null,
+        privRouteId: null,
+      };
+    }
+  }
+
+  return { markedStations, initReachedInfos };
+};
+
+// 도보 이동 가능 역들 이동시키기
+getNextInfos = ({
+  markedStations,
+  reachedInfo,
+  stationsByGeohash,
+  stationInfos,
+}) => {
+  const newMarkedStations = new Set();
+
+  // 전체 geohash 모으기
+  // ** markedGeohashes
+  // {
+  //   geohash: {
+  //     arrTime,
+  //     stationId,
+  //     walkingTime
+  //   }
+  // }
+
+  const markedGeohashes = {};
+  for (station in markedStations) {
+    const hash = geohash.encode(
+      stationInfos[station].lat,
+      stationInfos[station].lng,
+      level
+    );
+
+    if (
+      !(hash in markedGeohashes) ||
+      reachedInfo[station].arrTime < markedGeohashes[hash].arrTime
+    ) {
+      markedGeohashes[hash] = {
+        arrTime: reachedInfo[station].arrTime,
+        stationId: station,
+        walkingTime: reachedInfo[station].walkingTime,
+      };
+    }
+  }
+
+  // [ {
+  //   staionId: {
+  //     arrTime,
+  //     walkingTime,
+  //     taxiCost,
+  //     privStationId,
+  //     privRouteId
+  //   }
+  // } ]
+
+  // 각 geohash에서 getCircleGeohash 호출
+  for (hash in markedGeohashes) {
+    geohashes = getCircleGeohash({ centerGeohash: hash, radius: 500 });
+
+    // hash 안에 있는 역들마다, 새 key 저장
+    for (curHash in geohashes) {
+      curHashInfo = markedGeohashes[curHash];
+
+      for (station in stationsByGeohash[curHash]) {
+        if (
+          station === curHashInfo.stationId &&
+          reachedInfo[station].arrTime > markedGeohashes[curHash].arrTime + 10
+        ) {
+          // 갱신
+          reachedInfo[station] = {
+            ...reachedInfo[station],
+            arrTime: markedGeohashes[curHash].arrTime,
+          };
+        } else if (
+          station !== curHashInfo.stationId &&
+          reachedInfo[station].arrTime >
+            markedGeohashes[curHash].arrTime + geohashes[curHash] + 10
+        ) {
+          // 갱신
+          reachedInfo[station] = {
+            ...reachedInfo[station],
+            arrTime: markedGeohashes[curHash].arrTime + geohashes[curHash] + 10,
+            walkingTime:
+              markedGeohashes[curHash].walkingTime + geohashes[curHash] + 10,
+            privStationId: markedGeohashes[curHash].stationId,
+            privRouteId: null,
+          };
+        }
+      }
+    }
+  }
+
+  // mark
+  newMarkedStations = reachedInfo.keys() | markedStations;
+
+  return {
+    markedStations: newMarkedStations,
+    footReachedInfo: reachedInfo,
+  };
+};
+
+// centerGeohash를 중심으로 radius를 반지름으로 하는 원을 geohash들로 만들어 리턴
+getCircleGeohash = ({ centerGeohash, radius }) => {
+  const centerPoint = geohash.decode(centerGeohash);
+  const neighbors = geohash.neighbors(centerGeohash);
+
+  const geohashes = {};
+  // ** geohashes
+  // { geohash: walkingTime }
+
+  for (const neighbor in neighbors) {
+    const neighborPoint = geohash.decode(neighbor);
+    const distance = haversine({
+      start: {
+        latitude: centerPoint.latitude,
+        longitude: centerPoint.longitude,
+      },
+      end: {
+        latitude: neighborPoint.latitude,
+        longitude: neighborPoint.longitude,
+      },
+    });
+    if (distance <= radius) {
+      geohashes[neighbor] = Math.round(distance / walkunit);
+    }
+  }
+
+  return geohashes;
+};
 
 module.exports = {
   findTaxiPath,
