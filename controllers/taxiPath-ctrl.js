@@ -45,16 +45,10 @@ raptorAlg = async (
   }
 ) => {
   // 1. 초기화
-  // 길찾기에 필요한 input data
+  // ** 길찾기에 필요한 input data
   // stationsByGeohash
   // {
   //   geoHash: Set(stationId1, 2, ... )
-  // }
-  // stationsInfo
-  // {
-  //   stationId: {
-  //     station
-  //   }
   // }
   // routesByStation
   // {
@@ -77,16 +71,10 @@ raptorAlg = async (
   //     ]
   //   ]
   // }
-  const [stationsByGeohash, routesByStation] = await Promise.all([
-    getEnableStationsFromDB(),
-    getEnableRoutesFromDB(),
-  ]);
+  const [stationsByGeohash, { routesByStation, tripsByRoute }] =
+    await Promise.all([getEnableStationsFromDB(), getEnableRoutesFromDB()]);
 
-  // console.log(stationsByGeohash);
-
-  return { stationsByGeohash, routesByStation };
-
-  // 길찾기 도중에 또는 output으로 사용될 data
+  // ** 길찾기 도중에 또는 output으로 사용될 data
   // reachedInfos
   // [ {
   //   staionId: {
@@ -107,7 +95,7 @@ raptorAlg = async (
   }
   const fastestReachedInds = {}; // 가장 빠른 도착시간 저장
 
-  // 한 round에서 살펴볼 역들, 그 역에서 탑승할 수 있는 노선들 저장
+  // ** 한 round에서 살펴볼 역들, 그 역에서 탑승할 수 있는 노선들 저장
   // markedRoutes
   // {
   //   routeId: {
@@ -231,11 +219,11 @@ getEnableStationsFromDB = async () => {
     conn = await mysql.getConnection();
 
     const sql_train = `
-      SELECT *      
+      SELECT stat_id, geohash
       FROM train_station
       `;
     const sql_bus = `
-      SELECT *
+      SELECT stat_id, geohash
       FROM bus_station
       `;
 
@@ -244,15 +232,26 @@ getEnableStationsFromDB = async () => {
       conn.query(sql_bus),
     ]);
 
-    result = {
-      train: train[0],
-      bus: bus[0],
-    };
-
     conn.release();
+
+    // geohash별로 station id 묶기
+    for (station of train[0]) {
+      if (!(station.geohash in result)) {
+        result[station.geohash] = new Set();
+      }
+
+      result[station.geohash].add(station.stat_id);
+    }
+    for (station of bus[0]) {
+      if (!(station.geohash in result)) {
+        result[station.geohash] = new Set();
+      }
+
+      result[station.geohash].add(station.stat_id);
+    }
   } catch (err) {
     if (conn !== null) conn.release();
-    console.log("err in getEnableStationsFromDB");
+    console.log(err);
   }
 
   return result;
@@ -265,29 +264,39 @@ getEnableRoutesFromDB = async () => {
   try {
     conn = await mysql.getConnection();
 
-    const sql_bus_route = `
-      select *
-      from bus_route
-      `;
     const sql_bus_trip = `
-    select *
-    from bus_timetable
+      SELECT stat_id, route_id, time
+      FROM bus_timetable
     `;
 
-    const [bus_route, bus_trip] = await Promise.all([
-      conn.query(sql_bus_route),
-      conn.query(sql_bus_trip),
-    ]);
-
-    result = {
-      bus_trip: bus_trip[0],
-      bus_route: bus_route[0],
-    };
+    const bus_trip = await conn.query(sql_bus_trip);
 
     conn.release();
+
+    const routesByStation = {};
+    const tripsByRoute = {};
+    for (trip of bus_trip[0]) {
+      if (!(trip.stat_id in routesByStation)) {
+        routesByStation[trip.stat_id] = new Set();
+      }
+      routesByStation[trip.stat_id].add(trip.route_id);
+
+      if (!(trip.route_id in tripsByRoute)) {
+        tripsByRoute[trip.route_id] = [];
+      }
+      tripsByRoute[trip.route_id].push({
+        stationId: trip.stat_id,
+        arrTime: trip.time,
+      });
+    }
+
+    result = {
+      routesByStation,
+      tripsByRoute,
+    };
   } catch (err) {
     if (conn !== null) conn.release();
-    console.log("err in getEnableRoutesFromDB");
+    console.log(err);
   }
 
   return result;
