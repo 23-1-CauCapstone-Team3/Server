@@ -1,3 +1,5 @@
+const mysql = require("../mysql/mysql");
+
 findTaxiPath = async (req, res) => {
   try {
     let {
@@ -10,15 +12,15 @@ findTaxiPath = async (req, res) => {
       maxWalking = 40,
     } = req.query;
 
-    result = raptorAlg({
-      startLat,
-      startLng,
-      endLat,
-      endLng,
-      startTime,
-      maxTransfer,
-      maxCost,
-      maxWalking,
+    result = await raptorAlg({
+      // startLat,
+      // startLng,
+      // endLat,
+      // endLng,
+      // startTime,
+      // maxTransfer,
+      // maxCost,
+      // maxWalking,
     });
 
     res.send({
@@ -30,16 +32,18 @@ findTaxiPath = async (req, res) => {
 };
 
 // 길찾기 raptor 알고리즘의 변형
-raptorAlg = async ({
-  startLat,
-  startLng,
-  endLat,
-  endLng,
-  startTime,
-  maxTransfer,
-  maxCost,
-  maxWalking,
-}) => {
+raptorAlg = async (
+  {
+    // startLat,
+    // startLng,
+    // endLat,
+    // endLng,
+    // startTime,
+    // maxTransfer,
+    // maxCost,
+    // maxWalking,
+  }
+) => {
   // 1. 초기화
   // 길찾기에 필요한 input data
   // stationsByGeohash
@@ -73,8 +77,14 @@ raptorAlg = async ({
   //     ]
   //   ]
   // }
-  const [stationsByGeohash, [routesByStation, tripsByRoute]] =
-    await Promise.all([getEnableStationsFromDB(), getEnableRoutesFromDB()]);
+  const [stationsByGeohash, routesByStation] = await Promise.all([
+    getEnableStationsFromDB(),
+    getEnableRoutesFromDB(),
+  ]);
+
+  // console.log(stationsByGeohash);
+
+  return { stationsByGeohash, routesByStation };
 
   // 길찾기 도중에 또는 output으로 사용될 data
   // reachedInfos
@@ -213,9 +223,75 @@ raptorAlg = async ({
   // TODO: 다 끝난 상황에서 어떻게 소요시간 및 길찾기 정보 제공할지
 };
 
-getEnableStationsFromDB = () => {};
+getEnableStationsFromDB = async () => {
+  let conn = null;
+  let result = {};
 
-getEnableRoutesFromDB = () => {};
+  try {
+    conn = await mysql.getConnection();
+
+    const sql_train = `
+      SELECT *      
+      FROM train_station
+      `;
+    const sql_bus = `
+      SELECT *
+      FROM bus_station
+      `;
+
+    const [train, bus] = await Promise.all([
+      conn.query(sql_train),
+      conn.query(sql_bus),
+    ]);
+
+    result = {
+      train: train[0],
+      bus: bus[0],
+    };
+
+    conn.release();
+  } catch (err) {
+    if (conn !== null) conn.release();
+    console.log("err in getEnableStationsFromDB");
+  }
+
+  return result;
+};
+
+getEnableRoutesFromDB = async () => {
+  let conn = null;
+  let result = {};
+
+  try {
+    conn = await mysql.getConnection();
+
+    const sql_bus_route = `
+      select *
+      from bus_route
+      `;
+    const sql_bus_trip = `
+    select *
+    from bus_timetable
+    `;
+
+    const [bus_route, bus_trip] = await Promise.all([
+      conn.query(sql_bus_route),
+      conn.query(sql_bus_trip),
+    ]);
+
+    result = {
+      bus_trip: bus_trip[0],
+      bus_route: bus_route[0],
+    };
+
+    conn.release();
+  } catch (err) {
+    if (conn !== null) conn.release();
+    console.log("err in getEnableRoutesFromDB");
+  }
+
+  return result;
+};
 
 getNowTrip = (route, trip, station) => {};
 
