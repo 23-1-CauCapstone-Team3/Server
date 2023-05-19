@@ -108,16 +108,16 @@ pathRouter.get('/getLastTimeAndPath', async(req, res) => {
       */
 
       for(let i = subPathLength; i >= 0; i--){
-        if(subLastPathTime !== null){
-          console.log(subLastPathTime.format())
-        } else {
-          console.log('null발생')
-        }
+        // if(subLastPathTime !== null){
+        //   console.log(subLastPathTime.format())
+        // } else {
+        //   console.log('null발생')
+        // }
         
         if(subLastPathTime !== null){
 
           if(path[i].trafficType === 3){
-            console.log('텀'+path[i].sectionTime)
+            // console.log('텀'+path[i].sectionTime)
 
             if(path[i].sectionTime == 0){
               subLastPathTime = subLastPathTime.subtract(10, 'm')
@@ -129,6 +129,7 @@ pathRouter.get('/getLastTimeAndPath', async(req, res) => {
               if(bus_term_time[element] !== undefined && bus_term_time[element] !== null){
                 return bus_term_time[element]
               } else {
+                // console.log('e')
                 return null
               }
             })
@@ -146,10 +147,11 @@ pathRouter.get('/getLastTimeAndPath', async(req, res) => {
               const busLastTime = bus_data.lastTM
   
               if(busLastTime.isSameOrBefore(subLastPathTime)){
-                console.log('버스'+busLastTime,path[i].sectionTime, bus_data.term)
+                // console.log('버스'+busLastTime,path[i].sectionTime, bus_data.term)
                 subLastPathTime = busLastTime.subtract(path[i].sectionTime,'m').subtract(bus_data.term,'m')
               }
             } else {
+              // console.log('d')
               subLastPathTime = null
             }
           } else {
@@ -165,25 +167,10 @@ pathRouter.get('/getLastTimeAndPath', async(req, res) => {
                 } else {
                   return false
                 }
-              }).reduce((prev, now) => { 
-                if(prev['도착시간'].isAfter(now['도착시간'])) {
-                  return prev
-                } else {
-                  return now
-                }
               })
-
-              const startStationLastRail = train_time[keyString][path[i].startID].filter((element)=> {
-                if(element['열차번호'] === endStationLastRail['열차번호']) {
-                  return true
-                } else{
-                  return false
-                }
-              })
-  
-              if (startStationLastRail.length > 0){
-                
-                const newLastPathTime = startStationLastRail.reduce((prev, now) => { 
+              
+              if(endStationLastRail.length > 0) {
+                const tempEndStationLastRail = endStationLastRail.reduce((prev, now) => { 
                   if(prev['도착시간'].isAfter(now['도착시간'])) {
                     return prev
                   } else {
@@ -191,16 +178,42 @@ pathRouter.get('/getLastTimeAndPath', async(req, res) => {
                   }
                 })
 
-                if(newLastPathTime['도착시간'].isBefore(subLastPathTime)){
-                  console.log('지하철'+newLastPathTime['도착시간'].format())
-                  subLastPathTime = newLastPathTime['도착시간']
+                const startStationLastRail = train_time[keyString][path[i].startID].filter((element)=> {
+                  if(element['열차번호'] === tempEndStationLastRail['열차번호']) {
+                    return true
+                  } else{
+                    return false
+                  }
+                })
+    
+                if (startStationLastRail.length > 0){
+                  
+                  const newLastPathTime = startStationLastRail.reduce((prev, now) => { 
+                    if(prev['도착시간'].isAfter(now['도착시간'])) {
+                      return prev
+                    } else {
+                      return now
+                    }
+                  })
+  
+                  if(newLastPathTime['도착시간'].isBefore(subLastPathTime)){
+                    // console.log('지하철'+newLastPathTime['도착시간'].format())
+                    subLastPathTime = newLastPathTime['도착시간']
+                  }
+                
+                } else {
+                  // console.log('a')
+                  subLastPathTime =  null
                 }
-              
+
               } else {
+                // console.log('b')
                 subLastPathTime =  null
               }
-            
+              
+
             } else {
+              // console.log('c')
               subLastPathTime =  null
             }
           }
@@ -214,19 +227,24 @@ pathRouter.get('/getLastTimeAndPath', async(req, res) => {
       }
     })
 
+    // console.log(lastPaths)
+
+    // 길이 체크 해야함
     let minIndex = 0
-    const lastPath = lastPaths.reduce((prev, now, index) => {
-      
-      if(prev.subLastPathTime === null || now.subLastPathTime === null){
-        return prev
-      } 
-      if(prev.subLastPathTime.isSameOrAfter(now.subLastPathTime)) {
-        return prev
-      } else {
-        minIndex = index
-        return now
-      }
-    })
+    const filteredLastPaths = lastPaths.filter(element=> element.subLastPathTime)
+    
+    if(filteredLastPaths.length > 0){
+
+      const lastPath = filteredLastPaths.reduce((prev, now, index) => {
+        if(prev.subLastPathTime.isSameOrAfter(now.subLastPathTime)) {
+          return prev
+        } else {
+          minIndex = index
+          return now
+        }
+      })
+
+      // console.log(lastPath)
     
     /**
      * 위에서 구한 마지막의 막차에 대한 걸리는 시간을 다시 연산하는 작업 
@@ -280,10 +298,19 @@ pathRouter.get('/getLastTimeAndPath', async(req, res) => {
     console.timeEnd('test')
 
     return res.status(200).send({
+      pathExistence: true,
       arrivalTime: arrivalTime.format('YYYY-MM-DDTHH:mm:ss'), 
       departureTime:lastPath.subLastPathTime.format('YYYY-MM-DDTHH:mm:ss'), 
-      pathInfo: {...rest, subPath: subPathRes}}) 
+      pathInfo: {...rest, subPath: subPathRes}})
 
+    } else {
+      return res.status(200).send({
+        pathExistence: false,
+        arrivalTime: null, 
+        departureTime:null, 
+        pathInfo: null})
+    }
+     
   } catch (err) {
     console.log(err)
     return res.status(400).send({ error: err.message, result: false }) 
