@@ -5,6 +5,7 @@ const haversine = require("haversine");
 const level = 6; // geohash level
 
 // 10분 = 대각선 약 700m, 가로 세로는 500m
+// 1분에 약 50m 이동 가능하다고 가정
 const walkunit = 50;
 
 findTaxiPath = async (req, res) => {
@@ -14,6 +15,7 @@ findTaxiPath = async (req, res) => {
       SY: startLat,
       EX: endLng,
       EY: endLat,
+      startTime,
       maxTransfer = 4,
       maxCost = 30000,
       maxWalking = 40,
@@ -24,7 +26,7 @@ findTaxiPath = async (req, res) => {
       startLng,
       endLat,
       endLng,
-      startDate: new Date("2023-05-19T20:24:00"),
+      startDate: new Date("2023-05-25T22:00:00"),
       maxTransfer,
       // maxCost,
       // maxWalking,
@@ -37,26 +39,100 @@ findTaxiPath = async (req, res) => {
   }
 };
 
-getWeeksFromDate = (now) => {
-  const weeks = now.getDay();
-  if (now.getHours() < 5) {
-    weeks -= 1;
+// TODO: 성엽님이 만든 함수로 대체하기
+checkIsHoliday = (date) => {
+  let isHoliday = false;
 
-    if (weeks < 0) {
-      weeks = 6;
+  const solarHoliday = new Set([
+    "0101",
+    "0301",
+    "0505",
+    "0606",
+    "0815",
+    "1003",
+    "1009",
+    "1225",
+  ]);
+  const lunarHoliday = new Set(["0527", "0928", "0929", "0930"]);
+
+  if (
+    getDateStringToDate(date) in solarHoliday ||
+    getDateStringToDate(date) in lunarHoliday
+  ) {
+    isHoliday = true;
+  }
+
+  return isHoliday;
+};
+
+getDateStringToDate = (date) => {
+  return (
+    (date.getMonth() + 1 < 9
+      ? "0" + (date.getMonth() + 1)
+      : date.getMonth() + 1) +
+    (date.getDate() < 9 ? "0" + date.getDate() : date.getDate())
+  );
+};
+
+getWeekFromDate = (date) => {
+  const week = date.getDay();
+  if (date.getHours() < 5) {
+    week -= 1;
+
+    if (week < 0) {
+      week = 6;
     }
   }
 
-  return weeks;
+  return week;
+};
+
+getTrainWeekFromWeek = (date) => {
+  if (checkIsHoliday(date)) return 3;
+
+  const week = getWeekFromDate(date);
+
+  let trainWeek;
+  if (week >= 0 && week <= 4) {
+    trainWeek = 1;
+  } else if (week === 5) {
+    trainWeek = 2;
+  } else {
+    trainWeek = 3;
+  }
+
+  return trainWeek;
+};
+
+getBusWeekFromWeek = (date) => {
+  if (checkIsHoliday(date)) return "holiday";
+
+  const week = getWeekFromDate(date);
+
+  let busWeek;
+  if (week >= 0 && week <= 4) {
+    busWeek = "day";
+    trainWeek = "";
+  } else if (week === 5) {
+    busWeek = "sat";
+  } else {
+    busWeek = "holiday";
+  }
+
+  return busWeek;
 };
 
 getTimeFromDate = (now) => {
   const time = now.getHours() * 60 + now.getMinutes();
-  if (time < 420) {
-    time += 1440;
+  if (time < 7 * 60) {
+    time += 24 * 60;
   }
 
   return time;
+};
+
+getTrainRouteId = ({ routeName, inout }) => {
+  return routeName + "-" + String(inout);
 };
 
 // 길찾기 raptor 알고리즘의 변형
@@ -70,18 +146,16 @@ raptorAlg = async ({
   // maxCost,
   // maxWalking,
 }) => {
+  // startDate 보정
+  if (getTimeFromDate(startDate) < 7 * 60) {
+    startDate.setDate(startDate.getDate() + 1);
+  }
+
   // 1. 초기화
   // ** 길찾기에 필요한 input data
   // 오늘 데이터
-  const weeks = getWeeksFromDate(startDate);
-  let busWeeks;
-  if (weeks >= 0 && weeks <= 4) {
-    busWeeks = "day";
-  } else if (weeks === 5) {
-    busWeeks = "sat";
-  } else {
-    busWeeks = "holiday";
-  }
+  const busWeek = getBusWeekFromWeek(startDate),
+    trainWeek = getTrainWeekFromWeek(startDate);
 
   const startTime = getTimeFromDate(startDate);
 
@@ -90,7 +164,7 @@ raptorAlg = async ({
     { routesByStation, tripsByRoute, termByRoute },
   ] = await Promise.all([
     getEnableStationsFromDB(),
-    getEnableRoutesFromDB({ busWeeks }),
+    getEnableRoutesFromDB({ busWeek, trainWeek }),
   ]);
 
   // ** 길찾기 도중에 또는 output으로 사용될 data
@@ -116,49 +190,43 @@ raptorAlg = async ({
     // 2-a. 같은 노선에 대해 더 이른 역에서 탑승할 수 있는 경우, 그 역에서 타면 됨
     // TODO: 급행 고려 필요 <- 급행 시간 잘 파악해보고, 늦은 시간에도 급행 다닌다면 고려해야 함
     for (const station of markedStations) {
-      if (checkIsBus(station)) {
-        // 버스 노선
-        for (const route of routesByStation[station]) {
-          let trip = getNowTrip({
-            route,
-            trip: tripsByRoute[route],
-            station,
-            term: termByRoute[route],
-          });
+      for (const route of routesByStation[station]) {
+        let trip = getNowTrip({
+          route,
+          trip: tripsByRoute[route],
+          station,
+          term: termByRoute[route],
+          arrTime: reachedInfos[k - 1][station].arrTime,
+        });
 
-          // trip 없는 노선은 배제시킴
-          if (trip === null) continue;
+        // trip 없는 노선은 배제시킴
+        if (trip === null) continue;
 
-          let nowStationInd = trip.findIndex(
-            (ele) => ele.stationId === station
-          );
-          // 버스 시간표에 없는 노선은 배제시킴 (현재 일부 데이터만 있어서 필요한 line)
-          if (nowStationInd === -1) continue;
+        let nowStationInd = trip.findIndex((ele) => ele.stationId === station);
+        // 버스 시간표에 없는 노선은 배제시킴 (현재 일부 데이터만 있어서 필요한 line)
+        if (nowStationInd === -1) continue;
 
-          // 시간표에 노선 있는 경우, 더 앞에서 탈 수 있다면 기록
-          if (route in markedRoutes) {
-            // 같은 차를 여러 역에서 탈 수 있는 경우, 이른 역부터 살펴보기
-            let origStationInd = markedRoutes[route].startStationInd;
-            if (
-              origStationInd ==
-                trip.findIndex(
-                  (ele) => ele.stationId === markedRoutes[route].startStationId
-                ) &&
-              nowStationInd < origStationInd
-            ) {
-              // 이번 역이 더 이른 역, 교체
-              markedRoutes[route].startStationId = station;
-              markedRoutes[route].startStationInd = nowStationInd;
-            }
-          } else {
-            markedRoutes[route] = {
-              startStationId: station,
-              startStationInd: nowStationInd,
-            };
+        // 시간표에 노선 있는 경우, 더 앞에서 탈 수 있다면 기록
+        if (route in markedRoutes) {
+          // 같은 차를 여러 역에서 탈 수 있는 경우, 이른 역부터 살펴보기
+          let origStationInd = markedRoutes[route].startStationInd;
+          if (
+            origStationInd ==
+              trip.findIndex(
+                (ele) => ele.stationId === markedRoutes[route].startStationId
+              ) &&
+            nowStationInd < origStationInd
+          ) {
+            // 이번 역이 더 이른 역, 교체
+            markedRoutes[route].startStationId = station;
+            markedRoutes[route].startStationInd = nowStationInd;
           }
+        } else {
+          markedRoutes[route] = {
+            startStationId: station,
+            startStationInd: nowStationInd,
+          };
         }
-      } else {
-        // 지하철 노선
       }
 
       markedStations.delete(station);
@@ -258,18 +326,18 @@ raptorAlg = async ({
 getEnableStationsFromDB = async () => {
   let conn = null;
 
-  let stationsByGeohash = {};
-  let stationInfos = {};
+  const stationsByGeohash = {},
+    stationInfos = {};
 
   try {
     conn = await mysql.getConnection();
 
     const sql_train = `
-      SELECT stat_id, geohash
+      SELECT *
       FROM train_station
       `;
     const sql_bus = `
-      SELECT stat_id, geohash
+      SELECT *
       FROM bus_station
       `;
 
@@ -279,24 +347,31 @@ getEnableStationsFromDB = async () => {
     ]);
 
     conn.release();
-
     // geohash별로 station id 묶기
-    // for (station of train[0]) {
-    //   if (!(station.geohash in stationsByGeohash)) {
-    //     stationsByGeohash[station.geohash] = new Set();
-    //   }
-    //   stationsByGeohash[station.geohash].add(station.stat_id);
+    for (station of train[0]) {
+      if (!(station.geohash in stationsByGeohash)) {
+        stationsByGeohash[station.geohash] = new Set();
+      }
+      stationsByGeohash[station.geohash].add(station.stat_id);
 
-    //   stationsInfos[station.stat_id] = station;
-    // }
+      stationInfos[station.stat_id] = {
+        stationName: station.stat_name,
+        lat: station.lat,
+        lng: station.lng,
+      };
+    }
+
     for (station of bus[0]) {
       if (!(station.geohash in stationsByGeohash)) {
         stationsByGeohash[station.geohash] = new Set();
       }
-
       stationsByGeohash[station.geohash].add(station.stat_id);
 
-      stationInfos[station.stat_id] = station;
+      stationInfos[station.stat_id] = {
+        stationName: station.stat_name,
+        lat: station.lat,
+        lng: station.lng,
+      };
     }
   } catch (err) {
     if (conn !== null) conn.release();
@@ -306,32 +381,88 @@ getEnableStationsFromDB = async () => {
   return { stationsByGeohash, stationInfos };
 };
 
-getEnableRoutesFromDB = async ({ busWeeks }) => {
+getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
   let conn = null;
   let result = {};
 
   try {
     conn = await mysql.getConnection();
 
+    const sql_train_trip = `
+      SELECT *
+      FROM train_timetable
+      WHERE week ${trainWeek == 1 ? " = 1" : " >= 2"}
+    `;
     const sql_bus_trip = `
       SELECT *
       FROM bus_timetable
     `;
     const sql_bus_term = `
-      SELECT route_id, ${busWeeks} as term
+      SELECT route_id, ${busWeek} as term
       FROM bus_route
     `;
 
-    const [bus_trip, bus_term] = await Promise.all([
+    const [train_trip, bus_trip, bus_term] = await Promise.all([
+      conn.query(sql_train_trip),
       conn.query(sql_bus_trip),
       conn.query(sql_bus_term),
     ]);
 
     conn.release();
 
+    const routeIncludesWeek3 = new Set([
+      "1호선",
+      "2호선",
+      "3호선",
+      "4호선",
+      "5호선",
+      "6호선",
+      "7호선",
+      "8호선",
+      "9호선",
+    ]);
+
     const routesByStation = {},
-      tripsByRoute = {},
+      tripsByTrainRoute = {},
+      tripsByBusRoute = {},
       termByRoute = {};
+
+    for (info of train_trip[0]) {
+      if (info.route_name in routeIncludesWeek3 && info.week != trainWeek) {
+        // 필요없는 정보
+        continue;
+      }
+
+      const id = getTrainRouteId({
+        routeName: info.route_name,
+        inout: info.inout,
+      });
+
+      if (!(info.stat_id in routesByStation)) {
+        routesByStation[info.stat_id] = new Set();
+      }
+      routesByStation[info.stat_id].add(id);
+
+      if (!(id in tripsByTrainRoute)) {
+        tripsByTrainRoute[id] = {};
+      }
+      if (!(info.train_id in tripsByTrainRoute[id])) {
+        tripsByTrainRoute[id][info.train_id] = [];
+      }
+
+      tripsByTrainRoute[id][info.train_id].push({
+        order: info.order,
+        stationId: info.stat_id,
+        arrTime: info.time,
+      });
+    }
+    for (id in tripsByTrainRoute) {
+      for (trainId in tripsByTrainRoute[id]) {
+        tripsByTrainRoute[id][trainId] = tripsByTrainRoute[id][trainId].sort(
+          (el1, el2) => el1.order - el2.order
+        );
+      }
+    }
 
     for (info of bus_trip[0]) {
       if (!(info.stat_id in routesByStation)) {
@@ -339,19 +470,26 @@ getEnableRoutesFromDB = async ({ busWeeks }) => {
       }
       routesByStation[info.stat_id].add(info.route_id);
 
-      if (!(info.route_id in tripsByRoute)) {
-        tripsByRoute[info.route_id] = [];
+      if (!(info.route_id in tripsByBusRoute)) {
+        tripsByBusRoute[info.route_id] = [];
       }
-      tripsByRoute[info.route_id].push({
+      tripsByBusRoute[info.route_id].push({
         order: info.order,
         stationId: info.stat_id,
         arrTime: info.time,
       });
     }
+    for (route in tripsByBusRoute) {
+      tripsByBusRoute[route] = tripsByBusRoute[route].sort(
+        (el1, el2) => el1.order - el2.order
+      );
+    }
 
     for (info of bus_term[0]) {
       termByRoute[info.route_id] = info.term;
     }
+
+    const tripsByRoute = { ...tripsByTrainRoute, ...tripsByBusRoute };
 
     result = {
       routesByStation,
@@ -367,19 +505,23 @@ getEnableRoutesFromDB = async ({ busWeeks }) => {
 };
 
 checkIsBus = (id) => {
-  if (id >= 100000000) return true;
+  if (parseInt(id) >= 100000000) return true;
 
   return false;
 };
 
 getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
-  // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠
+  // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠 -> radius walkUnit 등 모든 상수 리팩토링 필요
   if (checkIsBus(station)) {
+    // 버스
     // 배차간격 -1일 경우, 해당 요일에 운영 X
     if (term === -1) return null;
 
-    // 1. 막차 시간 - (정류장 도달 시간)
+    // 1. 막차 시간 - (정류장 도달 시간) 차 계산
     const startStationInd = trip.findIndex((el) => el.stationId === station);
+
+    // 정류장을 지나지 않는 경우 (오류 case)
+    if (startStationInd === -1) return null;
 
     let diff;
     if (arrTime === -1) {
@@ -388,6 +530,7 @@ getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
       diff = trip[startStationInd].arrTime - (term + arrTime);
     }
 
+    // 2. 정류장에 도착한 뒤, 배차 간격만큼 대기 후 오는 차를 타도록 함
     let newTrip = trip.map((el) => {
       return {
         arrTime: el.arrTime - diff,
@@ -396,8 +539,30 @@ getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
       };
     });
 
-    // 지나는 순서로 정렬
-    newTrip = newTrip.sort((el1, el2) => el1.order - el2.order);
+    return newTrip;
+  } else {
+    // 지하철
+    // 1. 가장 가까운 정보 찾기
+    let selectedTrainId = -1,
+      minArrTime = Number.MAX_SAFE_INTEGER;
+
+    for (trainId in trip) {
+      const startStationInd = trip[trainId].findIndex(
+        (el) => el.stationId === station
+      );
+
+      if (startStationInd === -1) continue;
+
+      if (minArrTime > trip[trainId][startStationInd].arrTime) {
+        selectedTrainId = trainId;
+        minArrTime = trip[trainId][startStationInd].arrTime;
+      }
+    }
+
+    if (selectedTrainId === -1) return null;
+
+    let newTrip = trip[selectedTrainId];
+    // TODO: 지하철 방향별 차 고려하도록 수정해야 함 -> 급행 또는 방향이 갈리는 몇몇 노선들에 대해
 
     return newTrip;
   }
@@ -406,7 +571,7 @@ getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
 getInitInfos = ({ startGeohash, startTime, stationsByGeohash }) => {
   const circleGeohash = getCircleGeohash({
     centerGeohash: startGeohash,
-    radius: 500,
+    radius: 500 * 2,
   });
 
   let markedStations = new Set();
@@ -464,7 +629,7 @@ getNextInfos = ({
 
   // 각 geohash에서 getCircleGeohash 호출
   for (hash in markedGeohashes) {
-    geohashes = getCircleGeohash({ centerGeohash: hash, radius: 500 });
+    geohashes = getCircleGeohash({ centerGeohash: hash, radius: 500 * 2 });
 
     // hash 안에 있는 역들마다, 새 key 저장
     for (curHash in geohashes) {
@@ -483,14 +648,14 @@ getNextInfos = ({
         } else if (
           station !== curHashInfo.stationId &&
           reachedInfo[station].arrTime >
-            markedGeohashes[curHash].arrTime + geohashes[curHash] + 5
+            markedGeohashes[curHash].arrTime + geohashes[curHash]
         ) {
           // 갱신
           reachedInfo[station] = {
             ...reachedInfo[station],
-            arrTime: markedGeohashes[curHash].arrTime + geohashes[curHash] + 5,
+            arrTime: markedGeohashes[curHash].arrTime + geohashes[curHash],
             walkingTime:
-              markedGeohashes[curHash].walkingTime + geohashes[curHash] + 5,
+              markedGeohashes[curHash].walkingTime + geohashes[curHash],
             privStationId: markedGeohashes[curHash].stationId,
             privRouteId: null,
           };

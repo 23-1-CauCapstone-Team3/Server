@@ -8,28 +8,46 @@
    }
    ```
 
-2. routesByStation
+2. stationInfos
 
    ```
    {
-       stationId: Set(routeId1, 2, ...)
+       stationId: {
+            stationName,
+            lat
+            lng
+       }
+   }
+
+   ```
+
+3. routesByStation
+
+   ```
+   {
+       busStationId: Set(routeId1, 2, ...),
+       trainStationId: Set(inout-trainNum1, ...)
    }
    ```
 
-3. tripsByRoute
+4. tripsByRoute
    ```
    {
        busRouteId: [ {
-           stationId,
-           arrTime
+            order,
+            stationId,
+            arrTime
        } ],
-       trainRouteId: [ {
-           stationId,
-           arrTime
-       } ]
+        routeName-inout: {
+            trainId: [ {
+                order,
+                stationId,
+                arrTime
+            } ]
+        }
    }
    ```
-4. termByRoute
+5. termByRoute
    ```
     {
        routeId: term
