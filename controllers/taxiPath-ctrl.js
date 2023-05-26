@@ -747,6 +747,37 @@ const findNeighbors = (hash) => {
   return neighbors;
 };
 
+const getDistFromTaxiCost = ({ cost, arrTime }) => {
+  const extraPercentage = calcExtraPercentage(arrTime);
+
+  if (cost <= 4800 * extraPercentage) {
+    return 1600;
+  }
+
+  return ((cost / extraPercentage - 4800) / 100) * 131 - 1600;
+};
+
+const getTaxiCostFromDist = ({ distance, arrTime }) => {
+  const extraPercentage = calcExtraPercentage(arrTime);
+
+  if (distance <= 1600) {
+    return 4800 * extraPercentage;
+  }
+
+  return (4800 + ((distance - 1600) / 131) * 100) * extraPercentage;
+};
+
+const calcExtraPercentage = (arrTime) => {
+  if (
+    (arrTime >= 22 * 60 && arrTime < 23 * 60) ||
+    (arrTime >= 26 * 60 && arrTime < 28 * 60)
+  )
+    return 1.2;
+  else if (arrTime >= 23 * 60 && arrTime < 26 * 60) return 1.4;
+
+  return 1;
+};
+
 module.exports = {
   findTaxiPath,
 };
