@@ -1,4 +1,6 @@
 const mysql = require("../mysql/mysql");
+const axios = require("axios");
+const qs = require("qs");
 const geohash = require("ngeohash");
 const haversine = require("haversine");
 
@@ -18,7 +20,8 @@ const taxiRouteId = "taxk";
 const train = 1,
   bus = 2,
   walking = 3,
-  taxi = 4;
+  transferWalking = 4,
+  taxi = 5;
 
 const findTaxiPath = async (req, res) => {
   try {
@@ -72,23 +75,37 @@ const findTaxiPath = async (req, res) => {
     });
 
     // 4. raptor 결과 -> 경로
-    const result = mkPaths({
+    const paths = mkPaths({
       // *** 경로 만들 데이터
       startTime,
       reachedInfos,
       transferNum,
       endMarkedStations,
+      startLng,
+      startLat,
+      endLng,
+      endLat,
       // ** 경로 세부정보 추가를 위한 데이터
       stationInfos,
       routesByStation,
       tripsByRoute,
       busRouteInfos,
+    });
+
+    // 5. paths들 추려내기
+    const selectedPaths = selectPaths({
+      paths,
       // *** alg setting
       maxCost,
       maxWalking,
     });
 
-    res.send(result);
+    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    const resultPaths = await addRealtimeInfos({
+      paths: selectedPaths,
+    });
+
+    res.send(resultPaths);
   } catch (err) {
     console.log(err);
     return res.status(400).send({ err: err.message });
@@ -307,6 +324,10 @@ const mkPaths = ({
   reachedInfos,
   transferNum,
   endMarkedStations,
+  startLat,
+  startLng,
+  endLat,
+  endLng,
   // ** 경로 세부정보 추가를 위한 데이터
   stationInfos,
   routesByStation,
@@ -316,7 +337,7 @@ const mkPaths = ({
   maxCost,
   maxWalking,
 }) => {
-  const path = [];
+  const paths = [];
 
   // 환승이 적은 것부터,
   for (let i = 0; i < transferNum; i++) {
@@ -354,9 +375,15 @@ const mkPaths = ({
 
           // 도보 이동
           nowPath.subPath.unshift({
-            trafficType: walking,
+            trafficType: transferWalking,
             sectionTime:
               nowReachedInfo.walkingTime - prevReachedInfo.walkingTime,
+            startX: stationInfos[nowReachedInfo.prevStationId].lng,
+            startY: stationInfos[nowReachedInfo.prevStationId].lat,
+            endX: stationInfos[station].lng,
+            endY: stationInfos[station].lat,
+            startName: stationInfos[nowReachedInfo.prevStationId].stationName,
+            endName: stationInfos[station].stationName,
           });
 
           station = nowReachedInfo.prevStationId;
@@ -453,19 +480,120 @@ const mkPaths = ({
       nowPath.subPath.unshift({
         trafficType: walking,
         sectionTime: nowReachedInfo.walkingTime,
+        startX: startLng,
+        startY: startLat,
+        endX: stationInfos[station].lng,
+        endY: stationInfos[station].lat,
+        startName: "출발", // TODO: 출발 위치 이름 변경
+        endName: stationInfos[station].stationName,
       });
 
+      // 도착지 -> 마지막역 정보 추가
+      nowPath.subPath.push({
+        trafficType: walking,
+        sectionTime: nowReachedInfo.walkingTime,
+        startX: stationInfos[endStation].lng,
+        startY: stationInfos[endStation].lat,
+        endX: endLng,
+        endY: endLat,
+        startName: stationInfos[endStation].stationName,
+        endName: "도착", // TODO: 도착 위치 이름 변경
+      });
+
+      // 도착지 -> 마지막역 정보 추가
       // 첫 역 정보를 알아야지만 계산 가능한 정보들 추가
       nowPath.info.firstStartStation = stationInfos[station].stationName;
       nowPath.info.totalStationCount =
         nowPath.info.busStationCount + nowPath.info.subwayStationCount;
 
       // path 정보 추가
-      path.push(nowPath);
+      paths.push(nowPath);
     }
   }
 
-  return { count: path.length, path };
+  return paths;
+};
+
+// TODO: 각 경로 비교 알고리즘 구현
+const selectPaths = ({
+  paths,
+  // *** alg setting
+  maxCost,
+  maxWalking,
+}) => {
+  return [paths[0]];
+};
+
+const addRealtimeInfos = async ({ paths }) => {
+  let realtimePaths = null;
+  try {
+    realtimePaths = await Promise.all(
+      paths.map((path) => {
+        return addEachRealtimeInfo(path);
+      })
+    );
+  } catch (err) {
+    throw err;
+  }
+
+  return realtimePaths;
+};
+
+const addEachRealtimeInfo = async (path) => {
+  const { SK_KEY, SK_WALKING_URL } = process.env;
+  const newPath = { ...path, subPath: [] };
+
+  for (const subPath of path.subPath) {
+    if (
+      subPath.trafficType === walking ||
+      subPath.trafficType === transferWalking
+    ) {
+      // 도보
+
+      const tmapBody = qs.stringify({
+          ...subPath,
+        }),
+        config = {
+          headers: {
+            appKey: SK_KEY,
+          },
+        };
+
+      try {
+        const response = await axios
+          .post(SK_WALKING_URL, tmapBody, config)
+          .then(({ data }) => {
+            return data;
+          });
+
+        newPath.subPath.push({
+          ...subPath,
+          // TODO: 소요시간 정보 보정
+          steps: response.features.map((el) => {
+            return { type: el.type, geometry: el.geometry };
+          }),
+        });
+      } catch (err) {
+        throw err;
+      }
+    } else if (subPath.trafficType === taxi) {
+      // 택시
+      // TODO: 택시 추가
+
+      newPath.subPath.push({
+        ...subPath,
+      });
+    } else {
+      // 대중교통
+      // TODO: 실시간 도착정보 추가
+
+      newPath.subPath.push({
+        ...subPath,
+      });
+    }
+  }
+
+  return newPath;
 };
 
 // *** date, time 관련 함수들
