@@ -549,7 +549,6 @@ const addEachRealtimeInfo = async (path) => {
       subPath.trafficType === transferWalking
     ) {
       // 도보
-
       const tmapBody = qs.stringify({
           ...subPath,
         }),
@@ -578,11 +577,39 @@ const addEachRealtimeInfo = async (path) => {
       }
     } else if (subPath.trafficType === taxi) {
       // 택시
-      // TODO: 택시 추가
+      const tmapBody = qs.stringify({
+          ...subPath,
+        }),
+        config = {
+          headers: {
+            appKey: SK_KEY,
+          },
+        };
 
-      newPath.subPath.push({
-        ...subPath,
-      });
+      try {
+        const response = await axios
+          .post(SK_WALKING_URL, tmapBody, config)
+          .then(({ data }) => {
+            return data;
+          });
+
+        newPath.subPath.push({
+          ...subPath,
+          // TODO: 소요시간 정보 보정
+          steps: response.features
+            .map((el) => {
+              return { type: el.type, geometry: el.geometry };
+            })
+            .slice(1),
+          distance: esponse.features[0].properties.totalDistance,
+          sectionTime: Math.round(
+            response.features[0].properties.totalTime / 10
+          ),
+          payment: response.features[0].properties.taxiFare, // TODO: * calcExtraTaxiCostPercentage(arrTime) 필요
+        });
+      } catch (err) {
+        throw err;
+      }
     } else {
       // 대중교통
       // TODO: 실시간 도착정보 추가
@@ -1153,7 +1180,7 @@ const findNeighbors = (hash) => {
 
 // *** 택시 비용 <-> 거리 관련 함수들
 const getDistFromTaxiCost = ({ cost, arrTime }) => {
-  const extraPercentage = calcExtraPercentage(arrTime);
+  const extraPercentage = calcExtraTaxiCostPercentage(arrTime);
 
   if (cost <= 4800 * extraPercentage) {
     return 1600;
@@ -1163,7 +1190,7 @@ const getDistFromTaxiCost = ({ cost, arrTime }) => {
 };
 
 const getTaxiCostFromDist = ({ distance, arrTime }) => {
-  const extraPercentage = calcExtraPercentage(arrTime);
+  const extraPercentage = calcExtraTaxiCostPercentage(arrTime);
 
   if (distance <= 1600) {
     return 4800 * extraPercentage;
@@ -1172,7 +1199,7 @@ const getTaxiCostFromDist = ({ distance, arrTime }) => {
   return (4800 + ((distance - 1600) / 131) * 100) * extraPercentage;
 };
 
-const calcExtraPercentage = (arrTime) => {
+const calcExtraTaxiCostPercentage = (arrTime) => {
   if (
     (arrTime >= 22 * 60 && arrTime < 23 * 60) ||
     (arrTime >= 26 * 60 && arrTime < 28 * 60)
