@@ -13,6 +13,12 @@ const defaultMaxTransfer = 4;
 const defaultMaxCost = 30000;
 const defaultMaxWalking = 40;
 const defaultWalkingPerEachStep = 20;
+const walkingRouteId = "walking";
+const taxiRouteId = "taxk";
+const train = 1,
+  bus = 2,
+  walking = 3,
+  taxi = 4;
 
 const findTaxiPath = async (req, res) => {
   try {
@@ -21,56 +27,65 @@ const findTaxiPath = async (req, res) => {
       SY: startLat,
       EX: endLng,
       EY: endLat,
-      startDate = new Date("2023-05-25T22:00:00"),
+      startDate = new Date("2023-05-25T24:00:00"),
       maxTransfer = defaultMaxTransfer,
       maxCost = defaultMaxCost,
       maxWalking = defaultMaxWalking,
     } = req.query;
 
-    // 1. init data 생성
+    // 1. 길찾기에 쓰이는 데이터 구축
     const {
       startTime,
       stationsByGeohash,
       stationInfos,
       routesByStation,
       tripsByRoute,
-      termByRoute,
+      busRouteInfos,
     } = await init({ startDate });
 
-    // 2. raptor 알고리즘 시작과 끝에서 사용될 역정보 얻어오기
+    // 2. raptor 알고리즘에 필요한 시작/끝역 초기 데이터 구축
     const { markedStations, initReachedInfo } = getInitInfos({
       startGeohash: geohash.encode(startLat, startLng),
       startTime,
       stationsByGeohash,
     });
-    const { markedStations: finalMarkedStations } = getFinalInfos({
+    const { markedStations: endMarkedStations } = getFinalInfos({
       endGeohash: geohash.encode(endLat, endLng),
       stationsByGeohash,
-    });
-    const { markedStations: finalTaxiMarkedStations } = getFinalInfos({
-      endGeohash: geohash.encode(endLat, endLng),
-      stationsByGeohash,
-      radius: getDistFromTaxiCost(maxCost),
     });
 
     // 3. raptor 수행
-    const { reachedInfos, transferNum } = await raptorAlg({
-      // *** init data
+    const { reachedInfos, transferNum } = raptorAlg({
+      // *** 길찾기 데이터
       stationsByGeohash,
       stationInfos,
       routesByStation,
       tripsByRoute,
-      termByRoute,
-      // *** 시작 역정보
+      busRouteInfos,
+      // *** 시작 역 데이터
       markedStations,
       initReachedInfo,
       // *** alg setting
       maxTransfer,
-      // maxCost,
-      // maxWalking,
+      maxCost,
+      maxWalking,
     });
 
-    res.send(reachedInfos);
+    // 4. raptor 결과 -> 경로
+    const result = mkPaths({
+      // ***
+      startTime,
+      reachedInfos,
+      transferNum,
+      endMarkedStations,
+      stationInfos,
+      busRouteInfos,
+      // *** alg setting
+      maxCost,
+      maxWalking,
+    });
+
+    res.send(result);
   } catch (err) {
     console.log(err);
     return res.status(400).send({ err: err.message });
@@ -94,7 +109,7 @@ const init = async ({ startDate }) => {
   // 2. DB에서 정보 가져오기
   const [
     { stationsByGeohash, stationInfos },
-    { routesByStation, tripsByRoute, termByRoute },
+    { routesByStation, tripsByRoute, busRouteInfos },
   ] = await Promise.all([
     getEnableStationsFromDB(),
     getEnableRoutesFromDB({ busWeek, trainWeek }),
@@ -106,25 +121,25 @@ const init = async ({ startDate }) => {
     stationInfos,
     routesByStation,
     tripsByRoute,
-    termByRoute,
+    busRouteInfos,
   };
 };
 
 // *** 길찾기 raptor 알고리즘의 변형
-const raptorAlg = async ({
-  // *** init data
+const raptorAlg = ({
+  // *** 길찾기 데이터
   stationsByGeohash,
   stationInfos,
   routesByStation,
   tripsByRoute,
-  termByRoute,
-  // *** 시작 역정보
+  busRouteInfos,
+  // *** 시작 역 데이터
   markedStations,
   initReachedInfo,
   // *** alg setting
   maxTransfer,
-  // maxCost,
-  // maxWalking,
+  maxCost,
+  maxWalking,
 }) => {
   // ** 길찾기 도중에 또는 output으로 사용될 data
   const reachedInfos = []; // 각 round별 도착시간, 소요도보시간, 소요택시비 저장
@@ -147,7 +162,7 @@ const raptorAlg = async ({
           route,
           trip: tripsByRoute[route],
           station,
-          term: termByRoute[route],
+          term: route in busRouteInfos ? busRouteInfos[route].term : -1,
           arrTime: reachedInfos[transferNum - 1][station].arrTime,
         });
 
@@ -195,7 +210,7 @@ const raptorAlg = async ({
         route,
         trip: tripsByRoute[route],
         station: startStation,
-        term: termByRoute[route],
+        term: route in busRouteInfos ? busRouteInfos[route].term : -1,
         arrTime,
       });
 
@@ -234,8 +249,8 @@ const raptorAlg = async ({
             arrTime: trip[i].arrTime,
             walkingTime:
               reachedInfos[transferNum - 1][startStation].walkingTime,
-            privStationId: startStation,
-            privRouteId: route,
+            prevStationId: startStation,
+            prevRouteId: route,
           };
           fastestReachedIndsByStation[trip[i].stationId] = transferNum;
 
@@ -251,7 +266,7 @@ const raptorAlg = async ({
             route,
             trip: tripsByRoute[route],
             station: trip[i].stationId,
-            term: termByRoute[route],
+            term: route in busRouteInfos ? busRouteInfos[route].term : -1,
             arrTime: reachedInfos[transferNum - 1].arrTime,
           });
         }
@@ -277,8 +292,152 @@ const raptorAlg = async ({
     }
   }
 
-  // TODO: 다 끝난 상황에서 어떻게 소요시간 및 길찾기 정보 제공할지
   return { reachedInfos, transferNum };
+};
+
+// *** raptor 결과 -> 경로
+const mkPaths = ({
+  // *** 기본 데이터
+  startTime,
+  stationsByGeohash,
+  stationInfos,
+  routesByStation,
+  tripsByRoute,
+  busRouteInfos,
+  // *** 초기 데이터
+  reachedInfos,
+  transferNum,
+  endMarkedStations,
+}) => {
+  const path = [];
+
+  // 환승이 적은 것부터,
+  for (let i = 0; i < transferNum; i++) {
+    // 도착역에서부터 거슬러 올라가며, 각 역에서의 정보 확인
+    for (const endStation of endMarkedStations) {
+      if (!(endStation in reachedInfos[i])) continue;
+
+      // j번 환승을 통해 station에 도달한 경우
+      const nowPath = {
+        info: {
+          totalWalkingTime: reachedInfos[i][endStation].walkingTime,
+          totalTime: reachedInfos[i][endStation].arrTime - startTime, // TODO: 마지막 도보 더하기
+          // payment, // TODO
+          transitCount: i,
+          // firstStartStation, -> 맨 마지막에
+          lastEndStation: stationInfos[endStation].stationName,
+          busStationCount: 0,
+          subwayStationCount: 0,
+          // totalStationCount, -> 맨 마지막에
+          // totalDistance // TODO
+        },
+        subPath: [],
+      };
+
+      let nowReachedInfo = reachedInfos[i][endStation],
+        prevReachedInfo;
+      let station = endStation;
+      for (let j = i; j > 0; j--) {
+        if (nowReachedInfo.prevRouteId === walkingRouteId) {
+          if (nowReachedInfo.prevStationId === null) {
+            // -> 출발지
+            break;
+          }
+
+          prevReachedInfo = reachedInfos[j][nowReachedInfo.prevStationId];
+
+          // 도보 이동
+          nowPath.subPath.unshift({
+            trafficType: walking,
+            sectionTime:
+              nowReachedInfo.walkingTime - prevReachedInfo.walkingTime,
+          });
+
+          station = nowReachedInfo.prevStationId;
+          nowReachedInfo = prevReachedInfo;
+        } else if (nowReachedInfo.prevRouteId === taxiRouteId) {
+          prevReachedInfo = reachedInfos[j][nowReachedInfo.prevStationId];
+
+          // TODO: taxi 경우도 추가 필요
+
+          station = nowReachedInfo.prevStationId;
+          nowReachedInfo = prevReachedInfo;
+        }
+
+        // console.log(
+        //   j - 1,
+        //   nowReachedInfo,
+        //   // reachedInfos[j - 1],
+        //   reachedInfos[j - 1][nowReachedInfo.prevStationId]
+        // );
+        prevReachedInfo = reachedInfos[j - 1][nowReachedInfo.prevStationId];
+        if (checkIsBusStation(station)) {
+          // 버스
+          nowPath.info.busStationCount += 1;
+          nowPath.subPath.unshift({
+            trafficType: bus,
+            sectionTime: nowReachedInfo.arrTime - prevReachedInfo.arrTime,
+            // stationCount: , // TODO: stationCount 기록
+            lane: [
+              {
+                busNo: busRouteInfos[nowReachedInfo.prevRouteId].routeName,
+              },
+            ],
+            startName: stationInfos[nowReachedInfo.prevStationId].stationName,
+            startX: stationInfos[nowReachedInfo.prevStationId].lng,
+            startY: stationInfos[nowReachedInfo.prevStationId].lat,
+            endName: stationInfos[station].stationName,
+            endX: stationInfos[station].lng,
+            endY: stationInfos[station].lat,
+            // passStopList: [ // TODO: passStopList 기록
+            // ]
+          });
+        } else {
+          // 지하철
+          nowPath.info.subwayStationCount += 1;
+          nowPath.subPath.unshift({
+            trafficType: train,
+            // stationCount: , // TODO: stationCount 기록
+            sectionTime: nowReachedInfo.arrTIme - prevReachedInfo.arrTime,
+            lane: [
+              {
+                name: nowReachedInfo.prevRouteId.slice(0, -2), // (-1, -2 제거)
+              },
+            ],
+            startName: stationInfos[nowReachedInfo.prevStationId].stationName,
+            startX: stationInfos[nowReachedInfo.prevStationId].lng,
+            startY: stationInfos[nowReachedInfo.prevStationId].lat,
+            endName: stationInfos[station].stationName,
+            endX: stationInfos[station].lng,
+            endY: stationInfos[station].lat,
+            // way: // TODO: 방면 정보 추가
+            wayCode: parseInt(nowReachedInfo.prevRouteId.slice(-2, 0)),
+            // passStopList: [ // TODO: passStopList 기록
+            // ]
+          });
+        }
+
+        station = nowReachedInfo.prevStationId;
+        nowReachedInfo = prevReachedInfo;
+      }
+
+      // 마지막 첫역 -> 출발지 정보 추가
+      nowPath.subPath.unshift({
+        trafficType: walking,
+        sectionTime: nowReachedInfo.walkingTime,
+      });
+
+      // 첫 역 정보를 알아야지만 계산 가능한 정보들 추가
+      nowPath.info.firstStartStation = stationInfos[station].stationName;
+      nowPath.info.totalStationCount =
+        nowPath.info.busStationCount + nowPath.info.subwayStationCount;
+
+      // path 정보 추가
+      path.push(nowPath);
+    }
+  }
+
+  return { count: path.length, path };
 };
 
 // *** date, time 관련 함수들
@@ -318,7 +477,7 @@ const getDateStringToDate = (date) => {
 };
 
 const getWeekFromDate = (date) => {
-  const week = date.getDay();
+  let week = date.getDay();
   if (date.getHours() < 5) {
     week -= 1;
 
@@ -366,7 +525,7 @@ const getBusWeekFromWeek = (date) => {
 };
 
 const getTimeFromDate = (now) => {
-  const time = now.getHours() * 60 + now.getMinutes();
+  let time = now.getHours() * 60 + now.getMinutes();
   if (time < 7 * 60) {
     time += 24 * 60;
   }
@@ -450,7 +609,7 @@ const getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
       FROM bus_timetable
     `;
     const sql_bus_term = `
-      SELECT route_id, ${busWeek} as term
+      SELECT route_id, route_name, ${busWeek} as term
       FROM bus_route
     `;
 
@@ -477,7 +636,7 @@ const getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
     const routesByStation = {},
       tripsByTrainRoute = {},
       tripsByBusRoute = {},
-      termByRoute = {};
+      busRouteInfos = {};
 
     for (const info of train_trip[0]) {
       if (info.route_name in routeIncludesWeek3 && info.week != trainWeek) {
@@ -538,7 +697,10 @@ const getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
     }
 
     for (const info of bus_term[0]) {
-      termByRoute[info.route_id] = info.term;
+      busRouteInfos[info.route_id] = {
+        term: info.term,
+        routeName: info.route_name,
+      };
     }
 
     const tripsByRoute = { ...tripsByTrainRoute, ...tripsByBusRoute };
@@ -546,7 +708,7 @@ const getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
     result = {
       routesByStation,
       tripsByRoute,
-      termByRoute,
+      busRouteInfos,
     };
   } catch (err) {
     if (conn !== null) conn.release();
@@ -655,8 +817,8 @@ const getInitInfos = ({
       initReachedInfo[station] = {
         arrTime,
         walkingTime: circleGeohash[hash],
-        privStationId: null,
-        privRouteId: null,
+        prevStationId: null,
+        prevRouteId: walkingRouteId,
       };
     }
   }
@@ -726,7 +888,7 @@ const getNextInfos = ({
 
     // hash 안에 있는 역들마다, 새 key 저장
     for (const curHash in geohashes) {
-      curHashInfo = markedGeohashes[curHash];
+      const curHashInfo = markedGeohashes[curHash];
 
       for (const station in stationsByGeohash[curHash]) {
         if (
@@ -749,8 +911,8 @@ const getNextInfos = ({
             arrTime: markedGeohashes[curHash].arrTime + geohashes[curHash],
             walkingTime:
               markedGeohashes[curHash].walkingTime + geohashes[curHash],
-            privStationId: markedGeohashes[curHash].stationId,
-            privRouteId: null,
+            prevStationId: markedGeohashes[curHash].stationId,
+            prevRouteId: walkingRouteId,
           };
         }
       }
