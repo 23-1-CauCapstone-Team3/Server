@@ -73,12 +73,15 @@ const findTaxiPath = async (req, res) => {
 
     // 4. raptor 결과 -> 경로
     const result = mkPaths({
-      // ***
+      // *** 경로 만들 데이터
       startTime,
       reachedInfos,
       transferNum,
       endMarkedStations,
+      // ** 경로 세부정보 추가를 위한 데이터
       stationInfos,
+      routesByStation,
+      tripsByRoute,
       busRouteInfos,
       // *** alg setting
       maxCost,
@@ -249,8 +252,10 @@ const raptorAlg = ({
             arrTime: trip[i].arrTime,
             walkingTime:
               reachedInfos[transferNum - 1][startStation].walkingTime,
+            index: i,
             prevStationId: startStation,
             prevRouteId: route,
+            prevIndex: startStationInd,
           };
           fastestReachedIndsByStation[trip[i].stationId] = transferNum;
 
@@ -297,17 +302,19 @@ const raptorAlg = ({
 
 // *** raptor 결과 -> 경로
 const mkPaths = ({
-  // *** 기본 데이터
+  // *** 경로 만들 데이터
   startTime,
-  stationsByGeohash,
+  reachedInfos,
+  transferNum,
+  endMarkedStations,
+  // ** 경로 세부정보 추가를 위한 데이터
   stationInfos,
   routesByStation,
   tripsByRoute,
   busRouteInfos,
-  // *** 초기 데이터
-  reachedInfos,
-  transferNum,
-  endMarkedStations,
+  // *** alg setting
+  maxCost,
+  maxWalking,
 }) => {
   const path = [];
 
@@ -324,12 +331,11 @@ const mkPaths = ({
           totalTime: reachedInfos[i][endStation].arrTime - startTime, // TODO: 마지막 도보 더하기
           // payment, // TODO
           transitCount: i,
-          // firstStartStation, -> 맨 마지막에
+          // firstStartStation -> 맨 마지막에
           lastEndStation: stationInfos[endStation].stationName,
           busStationCount: 0,
           subwayStationCount: 0,
-          // totalStationCount, -> 맨 마지막에
-          // totalDistance // TODO
+          // totalStationCount -> 맨 마지막에
         },
         subPath: [],
       };
@@ -364,20 +370,44 @@ const mkPaths = ({
           nowReachedInfo = prevReachedInfo;
         }
 
-        // console.log(
-        //   j - 1,
-        //   nowReachedInfo,
-        //   // reachedInfos[j - 1],
-        //   reachedInfos[j - 1][nowReachedInfo.prevStationId]
-        // );
         prevReachedInfo = reachedInfos[j - 1][nowReachedInfo.prevStationId];
+
+        // 한 대중교통 이동의 세부 경로 계산
+        const trip = getNowTrip({
+          trip: tripsByRoute[nowReachedInfo.prevRouteId],
+          station,
+          term:
+            nowReachedInfo.prevRouteId in busRouteInfos
+              ? busRouteInfos[nowReachedInfo.prevRouteId].term
+              : -1,
+          arrTime: prevReachedInfo.arrTime,
+        });
+        const passStopList = { stations: [] };
+
+        let cnt = 0;
+        let prevId = null;
+        for (let i = nowReachedInfo.prevIndex; i <= nowReachedInfo.index; i++) {
+          if (prevId === trip[i].stationId) continue;
+
+          passStopList.stations.push({
+            index: cnt,
+            stationName: stationInfos[trip[i].stationId].stationName,
+            arrTime: trip[i].arrTime,
+            x: stationInfos[trip[i].stationId].lng,
+            y: stationInfos[trip[i].stationId].lat,
+          });
+          prevId = trip[i].stationId;
+          cnt++;
+        }
+
+        // 대중교통별 정보 추가
         if (checkIsBusStation(station)) {
           // 버스
           nowPath.info.busStationCount += 1;
           nowPath.subPath.unshift({
             trafficType: bus,
             sectionTime: nowReachedInfo.arrTime - prevReachedInfo.arrTime,
-            // stationCount: , // TODO: stationCount 기록
+            stationCount: cnt - 1,
             lane: [
               {
                 busNo: busRouteInfos[nowReachedInfo.prevRouteId].routeName,
@@ -389,15 +419,14 @@ const mkPaths = ({
             endName: stationInfos[station].stationName,
             endX: stationInfos[station].lng,
             endY: stationInfos[station].lat,
-            // passStopList: [ // TODO: passStopList 기록
-            // ]
+            passStopList,
           });
         } else {
           // 지하철
           nowPath.info.subwayStationCount += 1;
           nowPath.subPath.unshift({
             trafficType: train,
-            // stationCount: , // TODO: stationCount 기록
+            stationCount: cnt - 1,
             sectionTime: nowReachedInfo.arrTIme - prevReachedInfo.arrTime,
             lane: [
               {
@@ -412,8 +441,7 @@ const mkPaths = ({
             endY: stationInfos[station].lat,
             // way: // TODO: 방면 정보 추가
             wayCode: parseInt(nowReachedInfo.prevRouteId.slice(-2, 0)),
-            // passStopList: [ // TODO: passStopList 기록
-            // ]
+            passStopList,
           });
         }
 

@@ -97,8 +97,10 @@
        arrTime,
        walkingTime,
        taxiCost,
+       index,
        prevStationId,
-       prevRouteId
+       prevRouteId,
+       prevIndex,
        }
    } ]
    ```
@@ -145,16 +147,17 @@
                         endExitNo: 지하철 나가는 출구 번호,
                         endExitX,
                         endExitY,
-                        passStopList: [
+                        passStopList: {
                             stations: [
                                 {
                                     index: 순서,
                                     stationName: 정류장 이름,
+                                    arrTime: 도착 시간, (** 다름)
                                     x,
                                     y,
                                 }
                             ]
-                        ]
+                        }
                     }
                 ]
             }
