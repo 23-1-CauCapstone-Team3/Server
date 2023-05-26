@@ -6,12 +6,13 @@ const level = 6; // geohash level
 
 // 10분 = 대각선 약 700m, 가로 세로는 500m
 // 1분에 약 50m 이동 가능하다고 가정
-const walkunit = 50;
+const walkingUnit = 50;
 
-// 기본 상수
+// *** 기본 상수
 const defaultMaxTransfer = 4;
 const defaultMaxCost = 30000;
 const defaultMaxWalking = 40;
+const defaultWalkingPerEachStep = 20;
 
 const findTaxiPath = async (req, res) => {
   try {
@@ -20,30 +21,267 @@ const findTaxiPath = async (req, res) => {
       SY: startLat,
       EX: endLng,
       EY: endLat,
-      startTime,
+      startDate = new Date("2023-05-25T22:00:00"),
       maxTransfer = defaultMaxTransfer,
       maxCost = defaultMaxCost,
       maxWalking = defaultMaxWalking,
     } = req.query;
 
-    result = await raptorAlg({
-      startLat,
-      startLng,
-      endLat,
-      endLng,
-      startDate: new Date("2023-05-25T22:00:00"),
+    // 1. init data 생성
+    const {
+      startTime,
+      stationsByGeohash,
+      stationInfos,
+      routesByStation,
+      tripsByRoute,
+      termByRoute,
+    } = await init({ startDate });
+
+    // 2. raptor 알고리즘 시작과 끝에서 사용될 역정보 얻어오기
+    const { markedStations, initReachedInfo } = getInitInfos({
+      startGeohash: geohash.encode(startLat, startLng),
+      startTime,
+      stationsByGeohash,
+    });
+    const { markedStations: finalMarkedStations } = getFinalInfos({
+      endGeohash: geohash.encode(endLat, endLng),
+      stationsByGeohash,
+    });
+    const { markedStations: finalTaxiMarkedStations } = getFinalInfos({
+      endGeohash: geohash.encode(endLat, endLng),
+      stationsByGeohash,
+      radius: getDistFromTaxiCost(maxCost),
+    });
+
+    // 3. raptor 수행
+    const { reachedInfos, transferNum } = await raptorAlg({
+      // *** init data
+      stationsByGeohash,
+      stationInfos,
+      routesByStation,
+      tripsByRoute,
+      termByRoute,
+      // *** 시작 역정보
+      markedStations,
+      initReachedInfo,
+      // *** alg setting
       maxTransfer,
       // maxCost,
       // maxWalking,
     });
 
-    res.send(result);
+    res.send(reachedInfos);
   } catch (err) {
     console.log(err);
     return res.status(400).send({ err: err.message });
   }
 };
 
+// *** 길찾기 alg에 필요한 모든 input data 설정
+const init = async ({ startDate }) => {
+  // 1. 오늘 정보 가져오기
+  if (getTimeFromDate(startDate) < 7 * 60) {
+    startDate.setDate(startDate.getDate() - 1); // 전날 시간표로 취급해야 함
+  }
+
+  // 출발지에서 출발할 첫 시간
+  const startTime = getTimeFromDate(startDate);
+
+  // week 생성
+  const busWeek = getBusWeekFromWeek(startDate),
+    trainWeek = getTrainWeekFromWeek(startDate);
+
+  // 2. DB에서 정보 가져오기
+  const [
+    { stationsByGeohash, stationInfos },
+    { routesByStation, tripsByRoute, termByRoute },
+  ] = await Promise.all([
+    getEnableStationsFromDB(),
+    getEnableRoutesFromDB({ busWeek, trainWeek }),
+  ]);
+
+  return {
+    startTime,
+    stationsByGeohash,
+    stationInfos,
+    routesByStation,
+    tripsByRoute,
+    termByRoute,
+  };
+};
+
+// *** 길찾기 raptor 알고리즘의 변형
+const raptorAlg = async ({
+  // *** init data
+  stationsByGeohash,
+  stationInfos,
+  routesByStation,
+  tripsByRoute,
+  termByRoute,
+  // *** 시작 역정보
+  markedStations,
+  initReachedInfo,
+  // *** alg setting
+  maxTransfer,
+  // maxCost,
+  // maxWalking,
+}) => {
+  // ** 길찾기 도중에 또는 output으로 사용될 data
+  const reachedInfos = []; // 각 round별 도착시간, 소요도보시간, 소요택시비 저장
+  const fastestReachedIndsByStation = {}; // 가장 빠른 도착시간 저장
+
+  reachedInfos.push(initReachedInfo);
+  reachedInfos.push({});
+
+  // 2. round 반복
+  let transferNum;
+  for (transferNum = 1; transferNum <= maxTransfer; transferNum++) {
+    // maxTransfer 만큼의 round 반복
+    markedRoutes = {};
+
+    // 2-a. 같은 노선에 대해 더 이른 역에서 탑승할 수 있는 경우, 그 역에서 타면 됨
+    // TODO: 급행 고려 필요 <- 급행 시간 잘 파악해보고, 늦은 시간에도 급행 다닌다면 고려해야 함
+    for (const station of markedStations) {
+      for (const route of routesByStation[station]) {
+        let trip = getNowTrip({
+          route,
+          trip: tripsByRoute[route],
+          station,
+          term: termByRoute[route],
+          arrTime: reachedInfos[transferNum - 1][station].arrTime,
+        });
+
+        // trip 없는 노선은 배제시킴
+        if (trip === null) continue;
+
+        let nowStationInd = trip.findIndex((ele) => ele.stationId === station);
+        // 버스 시간표에 없는 노선은 배제시킴 (현재 일부 데이터만 있어서 필요한 line)
+        if (nowStationInd === -1) continue;
+
+        // 시간표에 노선 있는 경우, 더 앞에서 탈 수 있다면 기록
+        if (route in markedRoutes) {
+          // 같은 차를 여러 역에서 탈 수 있는 경우, 이른 역부터 살펴보기
+          let origStationInd = markedRoutes[route].startStationInd;
+          if (
+            origStationInd ==
+              trip.findIndex(
+                (ele) => ele.stationId === markedRoutes[route].startStationId
+              ) &&
+            nowStationInd < origStationInd
+          ) {
+            // 이번 역이 더 이른 역, 교체
+            markedRoutes[route].startStationId = station;
+            markedRoutes[route].startStationInd = nowStationInd;
+          }
+        } else {
+          markedRoutes[route] = {
+            startStationId: station,
+            startStationInd: nowStationInd,
+          };
+        }
+      }
+
+      markedStations.delete(station);
+    }
+
+    // 2-b. 모든 가능 경로에 대해 이동
+    for (const route in markedRoutes) {
+      let startStation = markedRoutes[route].startStationId;
+
+      arrTime =
+        reachedInfos[transferNum - 1][markedRoutes[route].startStationId]
+          .arrTime;
+      let trip = getNowTrip({
+        route,
+        trip: tripsByRoute[route],
+        station: startStation,
+        term: termByRoute[route],
+        arrTime,
+      });
+
+      const startStationInd = trip.findIndex(
+        (info) => info.stationId == startStation
+      );
+      const size = trip.length;
+
+      for (let i = startStationInd; i < size; i++) {
+        // 기록된 시간보다 더 빠르게 도달한 경우
+        let minArrTime = Number.MAX_SAFE_INTEGER;
+
+        if (
+          trip[i].stationId in fastestReachedIndsByStation &&
+          minArrTime <
+            reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
+              trip[i].stationId
+            ].arrTime
+        ) {
+          minArrTime =
+            reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
+              trip[i].stationId
+            ].arrTime;
+        }
+
+        if (
+          transferNum != fastestReachedIndsByStation[trip[i].stationId] &&
+          trip[i].stationId in reachedInfos[transferNum] &&
+          minArrTime < reachedInfos[transferNum][trip[i].stationId].arrTime
+        ) {
+          minArrTime = reachedInfos[transferNum][trip[i].stationId].arrTime;
+        }
+
+        if (trip[i].arrTime < minArrTime) {
+          reachedInfos[transferNum][trip[i].stationId] = {
+            arrTime: trip[i].arrTime,
+            walkingTime:
+              reachedInfos[transferNum - 1][startStation].walkingTime,
+            privStationId: startStation,
+            privRouteId: route,
+          };
+          fastestReachedIndsByStation[trip[i].stationId] = transferNum;
+
+          markedStations.add(trip[i].stationId);
+        }
+
+        // 더 빠른 시간에 열차 탑승이 가능한 경우, 이전 trip을 사용해도 됨
+        if (
+          transferNum > 0 &&
+          reachedInfos[transferNum - 1].arrTime <= trip[i].arrTime
+        ) {
+          trip = getNowTrip({
+            route,
+            trip: tripsByRoute[route],
+            station: trip[i].stationId,
+            term: termByRoute[route],
+            arrTime: reachedInfos[transferNum - 1].arrTime,
+          });
+        }
+      }
+    }
+
+    // 도보 이동
+    // 그냥 한/인접한 geohash에서 남은 도보 시간만큼 인접 geohash까지 이동 가능
+    let footReachedInfo;
+    ({ markedStations, footReachedInfo } = getNextInfos({
+      markedStations,
+      reachedInfo: reachedInfos[transferNum],
+      stationsByGeohash,
+      stationInfos,
+    }));
+    reachedInfos[transferNum] = footReachedInfo;
+
+    // 표시된 역 없는 경우 종료
+    if (markedStations.size === 0 || transferNum === maxTransfer) {
+      break;
+    } else {
+      reachedInfos.push({});
+    }
+  }
+
+  // TODO: 다 끝난 상황에서 어떻게 소요시간 및 길찾기 정보 제공할지
+  return { reachedInfos, transferNum };
+};
+
+// *** date, time 관련 함수들
 // TODO: 성엽님이 만든 함수로 대체하기
 const checkIsHoliday = (date) => {
   let isHoliday = false;
@@ -136,198 +374,7 @@ const getTimeFromDate = (now) => {
   return time;
 };
 
-const getTrainRouteId = ({ routeName, inout }) => {
-  return routeName + "-" + String(inout);
-};
-
-// 길찾기 raptor 알고리즘의 변형
-const raptorAlg = async ({
-  startLat,
-  startLng,
-  endLat,
-  endLng,
-  startDate = new Date(),
-  maxTransfer,
-  // maxCost,
-  // maxWalking,
-}) => {
-  // startDate 보정
-  if (getTimeFromDate(startDate) < 7 * 60) {
-    startDate.setDate(startDate.getDate() + 1);
-  }
-
-  // 1. 초기화
-  // ** 길찾기에 필요한 input data
-  // 오늘 데이터
-  const busWeek = getBusWeekFromWeek(startDate),
-    trainWeek = getTrainWeekFromWeek(startDate);
-
-  const startTime = getTimeFromDate(startDate);
-
-  const [
-    { stationsByGeohash, stationInfos },
-    { routesByStation, tripsByRoute, termByRoute },
-  ] = await Promise.all([
-    getEnableStationsFromDB(),
-    getEnableRoutesFromDB({ busWeek, trainWeek }),
-  ]);
-
-  // ** 길찾기 도중에 또는 output으로 사용될 data
-  const reachedInfos = []; // 각 round별 도착시간, 소요도보시간, 소요택시비 저장
-  const fastestReachedIndsByStation = {}; // 가장 빠른 도착시간 저장
-
-  // ** 한 round에서 살펴볼 역들, 그 역에서 탑승할 수 있는 노선들 저장
-  let markedRoutes = {};
-  let { markedStations, initReachedInfo } = getInitInfos({
-    startGeohash: geohash.encode(startLat, startLng),
-    startTime,
-    stationsByGeohash,
-  }); // 초기화 필요
-  reachedInfos.push(initReachedInfo);
-  reachedInfos.push({});
-
-  // 2. round 반복
-  let k;
-  for (k = 1; k <= maxTransfer; k++) {
-    // maxTransfer 만큼의 round 반복
-    markedRoutes = {};
-
-    // 2-a. 같은 노선에 대해 더 이른 역에서 탑승할 수 있는 경우, 그 역에서 타면 됨
-    // TODO: 급행 고려 필요 <- 급행 시간 잘 파악해보고, 늦은 시간에도 급행 다닌다면 고려해야 함
-    for (const station of markedStations) {
-      for (const route of routesByStation[station]) {
-        let trip = getNowTrip({
-          route,
-          trip: tripsByRoute[route],
-          station,
-          term: termByRoute[route],
-          arrTime: reachedInfos[k - 1][station].arrTime,
-        });
-
-        // trip 없는 노선은 배제시킴
-        if (trip === null) continue;
-
-        let nowStationInd = trip.findIndex((ele) => ele.stationId === station);
-        // 버스 시간표에 없는 노선은 배제시킴 (현재 일부 데이터만 있어서 필요한 line)
-        if (nowStationInd === -1) continue;
-
-        // 시간표에 노선 있는 경우, 더 앞에서 탈 수 있다면 기록
-        if (route in markedRoutes) {
-          // 같은 차를 여러 역에서 탈 수 있는 경우, 이른 역부터 살펴보기
-          let origStationInd = markedRoutes[route].startStationInd;
-          if (
-            origStationInd ==
-              trip.findIndex(
-                (ele) => ele.stationId === markedRoutes[route].startStationId
-              ) &&
-            nowStationInd < origStationInd
-          ) {
-            // 이번 역이 더 이른 역, 교체
-            markedRoutes[route].startStationId = station;
-            markedRoutes[route].startStationInd = nowStationInd;
-          }
-        } else {
-          markedRoutes[route] = {
-            startStationId: station,
-            startStationInd: nowStationInd,
-          };
-        }
-      }
-
-      markedStations.delete(station);
-    }
-
-    // 2-b. 모든 가능 경로에 대해 이동
-    for (const route in markedRoutes) {
-      let startStation = markedRoutes[route].startStationId;
-
-      arrTime = reachedInfos[k - 1][markedRoutes[route].startStationId].arrTime;
-      let trip = getNowTrip({
-        route,
-        trip: tripsByRoute[route],
-        station: startStation,
-        term: termByRoute[route],
-        arrTime,
-      });
-
-      const startStationInd = trip.findIndex(
-        (info) => info.stationId == startStation
-      );
-      const size = trip.length;
-
-      for (let i = startStationInd; i < size; i++) {
-        // 기록된 시간보다 더 빠르게 도달한 경우
-        let minArrTime = Number.MAX_SAFE_INTEGER;
-
-        if (
-          trip[i].stationId in fastestReachedIndsByStation &&
-          minArrTime <
-            reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
-              trip[i].stationId
-            ].arrTime
-        ) {
-          minArrTime =
-            reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
-              trip[i].stationId
-            ].arrTime;
-        }
-
-        if (
-          k != fastestReachedIndsByStation[trip[i].stationId] &&
-          trip[i].stationId in reachedInfos[k] &&
-          minArrTime < reachedInfos[k][trip[i].stationId].arrTime
-        ) {
-          minArrTime = reachedInfos[k][trip[i].stationId].arrTime;
-        }
-
-        if (trip[i].arrTime < minArrTime) {
-          reachedInfos[k][trip[i].stationId] = {
-            arrTime: trip[i].arrTime,
-            walkingTime: reachedInfos[k - 1][startStation].walkingTime,
-            privStationId: startStation,
-            privRouteId: route,
-          };
-          fastestReachedIndsByStation[trip[i].stationId] = k;
-
-          markedStations.add(trip[i].stationId);
-        }
-
-        // 더 빠른 시간에 열차 탑승이 가능한 경우, 이전 trip을 사용해도 됨
-        if (k > 0 && reachedInfos[k - 1].arrTime <= trip[i].arrTime) {
-          trip = getNowTrip({
-            route,
-            trip: tripsByRoute[route],
-            station: trip[i].stationId,
-            term: termByRoute[route],
-            arrTime: reachedInfos[k - 1].arrTime,
-          });
-        }
-      }
-    }
-
-    // 도보 이동
-    // 그냥 한/인접한 geohash에서 남은 도보 시간만큼 인접 geohash까지 이동 가능
-    let footReachedInfo;
-    ({ markedStations, footReachedInfo } = getNextInfos({
-      markedStations,
-      reachedInfo: reachedInfos[k],
-      stationsByGeohash,
-      stationInfos,
-    }));
-    reachedInfos[k] = footReachedInfo;
-
-    // 표시된 역 없는 경우 종료
-    if (markedStations.size === 0 || k === maxTransfer) {
-      break;
-    } else {
-      reachedInfos.push({});
-    }
-  }
-
-  // TODO: 다 끝난 상황에서 어떻게 소요시간 및 길찾기 정보 제공할지
-  return { reachedInfos, k };
-};
-
+// *** DB에서 데이터 불러오는 함수들
 const getEnableStationsFromDB = async () => {
   let conn = null;
 
@@ -509,15 +556,22 @@ const getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
   return result;
 };
 
-const checkIsBus = (id) => {
+// *** tripsByRoute에 사용할, 지하철 노선 + inout으로 id 생성하는 함수
+const getTrainRouteId = ({ routeName, inout }) => {
+  return routeName + "-" + String(inout);
+};
+
+// *** 버스 정류장인지 지하철 정류장인지 확인하는 함수
+const checkIsBusStation = (id) => {
   if (parseInt(id) >= 100000000) return true;
 
   return false;
 };
 
+// *** arrTIme에 맞는 trip 정보 가져오는 함수
 const getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
-  // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠 -> radius walkUnit 등 모든 상수 리팩토링 필요
-  if (checkIsBus(station)) {
+  // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠 -> radius walkingUnit 등 모든 상수 리팩토링 필요
+  if (checkIsBusStation(station)) {
     // 버스
     // 배차간격 -1일 경우, 해당 요일에 운영 X
     if (term === -1) return null;
@@ -573,14 +627,20 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
   }
 };
 
-const getInitInfos = ({ startGeohash, startTime, stationsByGeohash }) => {
-  const circleGeohash = getCircleGeohash({
-    centerGeohash: startGeohash,
-    radius: 500 * 2,
-  });
-
+// *** 첫 위치에서 도보 이동 가능 역들 이동하는 함수
+const getInitInfos = ({
+  startGeohash,
+  startTime,
+  stationsByGeohash,
+  radius = defaultWalkingPerEachStep * walkingUnit,
+}) => {
   let markedStations = new Set();
   const initReachedInfo = {};
+
+  const circleGeohash = getCircleGeohash({
+    centerGeohash: startGeohash,
+    radius,
+  });
 
   for (const hash in circleGeohash) {
     if (stationsByGeohash[hash] === undefined) {
@@ -604,12 +664,37 @@ const getInitInfos = ({ startGeohash, startTime, stationsByGeohash }) => {
   return { markedStations, initReachedInfo };
 };
 
-// 도보 이동 가능 역들 이동시키기
+const getFinalInfos = ({
+  endGeohash,
+  stationsByGeohash,
+  radius = defaultWalkingPerEachStep * walkingUnit,
+}) => {
+  let markedStations = new Set();
+
+  const circleGeohash = getCircleGeohash({
+    centerGeohash: endGeohash,
+    radius,
+  });
+
+  for (const hash in circleGeohash) {
+    if (stationsByGeohash[hash] === undefined) {
+      continue;
+    }
+
+    markedStations = new Set([...markedStations, ...stationsByGeohash[hash]]);
+  }
+
+  return { markedStations };
+};
+
+// *** 도보 이동 가능 역들 이동하는 함수
 const getNextInfos = ({
   markedStations,
   reachedInfo,
   stationsByGeohash,
   stationInfos,
+  radius = walkingUnit * defaultWalkingPerEachStep,
+  isTaxiMoving = radius <= walkingUnit * defaultWalkingPerEachStep,
 }) => {
   // 전체 geohash 모으기
   const markedGeohashes = {};
@@ -636,7 +721,7 @@ const getNextInfos = ({
   for (const hash in markedGeohashes) {
     const geohashes = getCircleGeohash({
       centerGeohash: hash,
-      radius: 500 * 2,
+      radius,
     });
 
     // hash 안에 있는 역들마다, 새 key 저장
@@ -681,6 +766,7 @@ const getNextInfos = ({
   };
 };
 
+// *** Geohash 관련 함수들
 // centerGeohash를 중심으로 radius를 반지름으로 하는 원을 geohash들로 만들어 리턴
 const getCircleGeohash = ({ centerGeohash, radius }) => {
   const centerPoint = geohash.decode(centerGeohash);
@@ -709,7 +795,7 @@ const getCircleGeohash = ({ centerGeohash, radius }) => {
 
     for (let i = 0; i < 4; i++) {
       if (!(neighbors[i] in geohashes)) {
-        geohashes[neighbors[i]] = Math.round(radius / walkunit);
+        geohashes[neighbors[i]] = Math.round(radius / walkingUnit);
         exploreCircle(neighbors[i]);
       }
     }
@@ -747,6 +833,7 @@ const findNeighbors = (hash) => {
   return neighbors;
 };
 
+// *** 택시 비용 <-> 거리 관련 함수들
 const getDistFromTaxiCost = ({ cost, arrTime }) => {
   const extraPercentage = calcExtraPercentage(arrTime);
 
