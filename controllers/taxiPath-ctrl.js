@@ -8,7 +8,12 @@ const level = 6; // geohash level
 // 1분에 약 50m 이동 가능하다고 가정
 const walkunit = 50;
 
-findTaxiPath = async (req, res) => {
+// 기본 상수
+const defaultMaxTransfer = 4;
+const defaultMaxCost = 30000;
+const defaultMaxWalking = 40;
+
+const findTaxiPath = async (req, res) => {
   try {
     let {
       SX: startLng,
@@ -16,9 +21,9 @@ findTaxiPath = async (req, res) => {
       EX: endLng,
       EY: endLat,
       startTime,
-      maxTransfer = 4,
-      maxCost = 30000,
-      maxWalking = 40,
+      maxTransfer = defaultMaxTransfer,
+      maxCost = defaultMaxCost,
+      maxWalking = defaultMaxWalking,
     } = req.query;
 
     result = await raptorAlg({
@@ -40,7 +45,7 @@ findTaxiPath = async (req, res) => {
 };
 
 // TODO: 성엽님이 만든 함수로 대체하기
-checkIsHoliday = (date) => {
+const checkIsHoliday = (date) => {
   let isHoliday = false;
 
   const solarHoliday = new Set([
@@ -65,7 +70,7 @@ checkIsHoliday = (date) => {
   return isHoliday;
 };
 
-getDateStringToDate = (date) => {
+const getDateStringToDate = (date) => {
   return (
     (date.getMonth() + 1 < 9
       ? "0" + (date.getMonth() + 1)
@@ -74,7 +79,7 @@ getDateStringToDate = (date) => {
   );
 };
 
-getWeekFromDate = (date) => {
+const getWeekFromDate = (date) => {
   const week = date.getDay();
   if (date.getHours() < 5) {
     week -= 1;
@@ -87,7 +92,7 @@ getWeekFromDate = (date) => {
   return week;
 };
 
-getTrainWeekFromWeek = (date) => {
+const getTrainWeekFromWeek = (date) => {
   if (checkIsHoliday(date)) return 3;
 
   const week = getWeekFromDate(date);
@@ -104,7 +109,7 @@ getTrainWeekFromWeek = (date) => {
   return trainWeek;
 };
 
-getBusWeekFromWeek = (date) => {
+const getBusWeekFromWeek = (date) => {
   if (checkIsHoliday(date)) return "holiday";
 
   const week = getWeekFromDate(date);
@@ -122,7 +127,7 @@ getBusWeekFromWeek = (date) => {
   return busWeek;
 };
 
-getTimeFromDate = (now) => {
+const getTimeFromDate = (now) => {
   const time = now.getHours() * 60 + now.getMinutes();
   if (time < 7 * 60) {
     time += 24 * 60;
@@ -131,12 +136,12 @@ getTimeFromDate = (now) => {
   return time;
 };
 
-getTrainRouteId = ({ routeName, inout }) => {
+const getTrainRouteId = ({ routeName, inout }) => {
   return routeName + "-" + String(inout);
 };
 
 // 길찾기 raptor 알고리즘의 변형
-raptorAlg = async ({
+const raptorAlg = async ({
   startLat,
   startLng,
   endLat,
@@ -323,7 +328,7 @@ raptorAlg = async ({
   return { reachedInfos, k };
 };
 
-getEnableStationsFromDB = async () => {
+const getEnableStationsFromDB = async () => {
   let conn = null;
 
   const stationsByGeohash = {},
@@ -348,7 +353,7 @@ getEnableStationsFromDB = async () => {
 
     conn.release();
     // geohash별로 station id 묶기
-    for (station of train[0]) {
+    for (const station of train[0]) {
       if (!(station.geohash in stationsByGeohash)) {
         stationsByGeohash[station.geohash] = new Set();
       }
@@ -361,7 +366,7 @@ getEnableStationsFromDB = async () => {
       };
     }
 
-    for (station of bus[0]) {
+    for (const station of bus[0]) {
       if (!(station.geohash in stationsByGeohash)) {
         stationsByGeohash[station.geohash] = new Set();
       }
@@ -381,7 +386,7 @@ getEnableStationsFromDB = async () => {
   return { stationsByGeohash, stationInfos };
 };
 
-getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
+const getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
   let conn = null;
   let result = {};
 
@@ -427,7 +432,7 @@ getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
       tripsByBusRoute = {},
       termByRoute = {};
 
-    for (info of train_trip[0]) {
+    for (const info of train_trip[0]) {
       if (info.route_name in routeIncludesWeek3 && info.week != trainWeek) {
         // 필요없는 정보
         continue;
@@ -456,15 +461,15 @@ getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
         arrTime: info.time,
       });
     }
-    for (id in tripsByTrainRoute) {
-      for (trainId in tripsByTrainRoute[id]) {
+    for (const id in tripsByTrainRoute) {
+      for (const trainId in tripsByTrainRoute[id]) {
         tripsByTrainRoute[id][trainId] = tripsByTrainRoute[id][trainId].sort(
           (el1, el2) => el1.order - el2.order
         );
       }
     }
 
-    for (info of bus_trip[0]) {
+    for (const info of bus_trip[0]) {
       if (!(info.stat_id in routesByStation)) {
         routesByStation[info.stat_id] = new Set();
       }
@@ -479,13 +484,13 @@ getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
         arrTime: info.time,
       });
     }
-    for (route in tripsByBusRoute) {
+    for (const route in tripsByBusRoute) {
       tripsByBusRoute[route] = tripsByBusRoute[route].sort(
         (el1, el2) => el1.order - el2.order
       );
     }
 
-    for (info of bus_term[0]) {
+    for (const info of bus_term[0]) {
       termByRoute[info.route_id] = info.term;
     }
 
@@ -504,13 +509,13 @@ getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
   return result;
 };
 
-checkIsBus = (id) => {
+const checkIsBus = (id) => {
   if (parseInt(id) >= 100000000) return true;
 
   return false;
 };
 
-getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
+const getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
   // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠 -> radius walkUnit 등 모든 상수 리팩토링 필요
   if (checkIsBus(station)) {
     // 버스
@@ -546,7 +551,7 @@ getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
     let selectedTrainId = -1,
       minArrTime = Number.MAX_SAFE_INTEGER;
 
-    for (trainId in trip) {
+    for (const trainId in trip) {
       const startStationInd = trip[trainId].findIndex(
         (el) => el.stationId === station
       );
@@ -568,7 +573,7 @@ getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
   }
 };
 
-getInitInfos = ({ startGeohash, startTime, stationsByGeohash }) => {
+const getInitInfos = ({ startGeohash, startTime, stationsByGeohash }) => {
   const circleGeohash = getCircleGeohash({
     centerGeohash: startGeohash,
     radius: 500 * 2,
@@ -577,14 +582,14 @@ getInitInfos = ({ startGeohash, startTime, stationsByGeohash }) => {
   let markedStations = new Set();
   const initReachedInfo = {};
 
-  for (hash in circleGeohash) {
+  for (const hash in circleGeohash) {
     if (stationsByGeohash[hash] === undefined) {
       continue;
     }
 
     markedStations = new Set([...markedStations, ...stationsByGeohash[hash]]);
 
-    for (station of stationsByGeohash[hash]) {
+    for (const station of stationsByGeohash[hash]) {
       const arrTime = startTime + circleGeohash[hash];
 
       initReachedInfo[station] = {
@@ -600,7 +605,7 @@ getInitInfos = ({ startGeohash, startTime, stationsByGeohash }) => {
 };
 
 // 도보 이동 가능 역들 이동시키기
-getNextInfos = ({
+const getNextInfos = ({
   markedStations,
   reachedInfo,
   stationsByGeohash,
@@ -608,7 +613,7 @@ getNextInfos = ({
 }) => {
   // 전체 geohash 모으기
   const markedGeohashes = {};
-  for (station in markedStations) {
+  for (const station in markedStations) {
     const hash = geohash.encode(
       stationInfos[station].lat,
       stationInfos[station].lng,
@@ -628,14 +633,17 @@ getNextInfos = ({
   }
 
   // 각 geohash에서 getCircleGeohash 호출
-  for (hash in markedGeohashes) {
-    geohashes = getCircleGeohash({ centerGeohash: hash, radius: 500 * 2 });
+  for (const hash in markedGeohashes) {
+    const geohashes = getCircleGeohash({
+      centerGeohash: hash,
+      radius: 500 * 2,
+    });
 
     // hash 안에 있는 역들마다, 새 key 저장
-    for (curHash in geohashes) {
+    for (const curHash in geohashes) {
       curHashInfo = markedGeohashes[curHash];
 
-      for (station in stationsByGeohash[curHash]) {
+      for (const station in stationsByGeohash[curHash]) {
         if (
           station === curHashInfo.stationId &&
           reachedInfo[station].arrTime > markedGeohashes[curHash].arrTime + 10
@@ -674,7 +682,7 @@ getNextInfos = ({
 };
 
 // centerGeohash를 중심으로 radius를 반지름으로 하는 원을 geohash들로 만들어 리턴
-getCircleGeohash = ({ centerGeohash, radius }) => {
+const getCircleGeohash = ({ centerGeohash, radius }) => {
   const centerPoint = geohash.decode(centerGeohash);
 
   const geohashes = {};
@@ -712,7 +720,7 @@ getCircleGeohash = ({ centerGeohash, radius }) => {
   return geohashes;
 };
 
-findNeighbors = (hash) => {
+const findNeighbors = (hash) => {
   const neighbors = [];
 
   // 주어진 Geohash를 위경도로 디코드
