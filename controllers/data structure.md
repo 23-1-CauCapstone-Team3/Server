@@ -96,6 +96,7 @@
        staionId: {
        arrTime,
        walkingTime,
+       taxiTime,
        taxiCost,
        index,
        prevStationId,
