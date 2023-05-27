@@ -102,6 +102,7 @@ const findTaxiPath = async (req, res) => {
 
     // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
     const resultPaths = await addRealtimeInfos({
+      startDate,
       paths: selectedPaths,
     });
 
@@ -348,15 +349,12 @@ const mkPaths = ({
       // j번 환승을 통해 station에 도달한 경우
       const nowPath = {
         info: {
-          totalWalkingTime: reachedInfos[i][endStation].walkingTime,
           totalTime: reachedInfos[i][endStation].arrTime - startTime, // TODO: 마지막 도보 더하기
           // payment, // TODO
-          transitCount: i,
+          transferCount: i,
           // firstStartStation -> 맨 마지막에
           lastEndStation: stationInfos[endStation].stationName,
-          busStationCount: 0,
-          subwayStationCount: 0,
-          // totalStationCount -> 맨 마지막에
+          totalWalkTime: reachedInfos[i][endStation].walkingTime,
         },
         subPath: [],
       };
@@ -419,10 +417,17 @@ const mkPaths = ({
           passStopList.stations.push({
             index: cnt,
             stationName: stationInfos[trip[i].stationId].stationName,
-            arrTime: trip[i].arrTime,
             x: stationInfos[trip[i].stationId].lng,
             y: stationInfos[trip[i].stationId].lat,
+            departureTime: trip[i].arrTime,
           });
+
+          if (checkIsBusStation(trip[i].stationId)) {
+            passStopList.stations[cnt].localStationID = trip[i].stationId;
+          } else {
+            passStopList.stations[cnt].stationID = trip[i].stationId;
+          }
+
           prevId = trip[i].stationId;
           cnt++;
         }
@@ -430,7 +435,6 @@ const mkPaths = ({
         // 대중교통별 정보 추가
         if (checkIsBusStation(station)) {
           // 버스
-          nowPath.info.busStationCount += 1;
           nowPath.subPath.unshift({
             trafficType: bus,
             sectionTime: nowReachedInfo.arrTime - prevReachedInfo.arrTime,
@@ -438,19 +442,22 @@ const mkPaths = ({
             lane: [
               {
                 busNo: busRouteInfos[nowReachedInfo.prevRouteId].routeName,
+                busLocalBlID: nowReachedInfo.prevRouteId,
+                departureTime: nowReachedInfo.arrTime,
               },
             ],
             startName: stationInfos[nowReachedInfo.prevStationId].stationName,
             startX: stationInfos[nowReachedInfo.prevStationId].lng,
             startY: stationInfos[nowReachedInfo.prevStationId].lat,
+            startLocalStationID: nowReachedInfo.prevStationId,
             endName: stationInfos[station].stationName,
             endX: stationInfos[station].lng,
             endY: stationInfos[station].lat,
+            endLocalStationID: station,
             passStopList,
           });
         } else {
           // 지하철
-          nowPath.info.subwayStationCount += 1;
           nowPath.subPath.unshift({
             trafficType: train,
             stationCount: cnt - 1,
@@ -521,15 +528,39 @@ const selectPaths = ({
   maxCost,
   maxWalking,
 }) => {
-  return [paths[0]];
+  let newPaths = [];
+
+  // 1. 지났던 역 또 지나는 경로 추려내기
+  for (let i = 0; i < paths.length; i++) {
+    let isOkay = true;
+    const stationSet = new Set();
+    const routeSet = new Route();
+
+    for (const subPath in paths[i].subPath) {
+      if (subPath.trafficType === bus || subPath.trafficType === train) {
+        // TODO: 중복되는 중간역 있는 경우 drop
+        // 대중교통 탈 때, 중간역들을 이전에 지난 적 있으면 안 됨 (반복하여 동일 역 지나가는 비효율적인 경로)
+        // or, 전 단계에서 이미 endStation에 포함된 역 있다면 drop
+      }
+    }
+  }
+
+  // 2. 중복 경로 추려내기
+  for (let i = 0; i < paths.length; i++) {
+    for (let j = i; j < paths.length; j++) {
+      // TODO:
+    }
+  }
+
+  return newPaths;
 };
 
-const addRealtimeInfos = async ({ paths }) => {
+const addRealtimeInfos = async ({ startDate, paths }) => {
   let realtimePaths = null;
   try {
     realtimePaths = await Promise.all(
       paths.map((path) => {
-        return addEachRealtimeInfo(path);
+        return addEachRealtimeInfo({ startDate, path });
       })
     );
   } catch (err) {
@@ -539,7 +570,7 @@ const addRealtimeInfos = async ({ paths }) => {
   return realtimePaths;
 };
 
-const addEachRealtimeInfo = async (path) => {
+const addEachRealtimeInfo = async ({ startDate, path }) => {
   const { SK_KEY, SK_WALKING_URL } = process.env;
   const newPath = { ...path, subPath: [] };
 
@@ -571,6 +602,10 @@ const addEachRealtimeInfo = async (path) => {
           steps: response.features.map((el) => {
             return { type: el.type, geometry: el.geometry };
           }),
+          distance: response.features[0].properties.totalDistance,
+          sectionTime: Math.round(
+            response.features[0].properties.totalTime / 10
+          ),
         });
       } catch (err) {
         throw err;
@@ -596,12 +631,10 @@ const addEachRealtimeInfo = async (path) => {
         newPath.subPath.push({
           ...subPath,
           // TODO: 소요시간 정보 보정
-          steps: response.features
-            .map((el) => {
-              return { type: el.type, geometry: el.geometry };
-            })
-            .slice(1),
-          distance: esponse.features[0].properties.totalDistance,
+          steps: response.features.map((el) => {
+            return { type: el.type, geometry: el.geometry };
+          }),
+          distance: response.features[0].properties.totalDistance,
           sectionTime: Math.round(
             response.features[0].properties.totalTime / 10
           ),
