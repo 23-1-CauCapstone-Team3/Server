@@ -954,18 +954,22 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
     // 배차간격 -1일 경우, 해당 요일에 운영 X
     if (term === -1) return null;
 
-    // 1. 막차 시간 - (정류장 도달 시간) 차 계산
+    // 첫 정류장에 대한 해당 노선 경로에서의 index
     const startStationInd = trip.findIndex((el) => el.stationId === station);
 
     // 정류장을 지나지 않는 경우 (오류 case)
     if (startStationInd === -1) return null;
 
+    // 1. 막차 시간 - (정류장 도달 시간) 차 계산
     let diff;
     if (arrTime === -1) {
       diff = 0;
     } else {
       diff = trip[startStationInd].arrTime - (term + arrTime);
     }
+
+    // 막차 시간을 이미 지났으면, 탑승 불가
+    if (diff < 0) return null;
 
     // 2. 정류장에 도착한 뒤, 배차 간격만큼 대기 후 오는 차를 타도록 함
     let newTrip = trip.map((el) => {
