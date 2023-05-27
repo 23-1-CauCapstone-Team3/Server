@@ -56,7 +56,7 @@ const findTaxiPath = async (req, res) => {
       SY: startLat,
       EX: endLng,
       EY: endLat,
-      startDate = new Date("2023-05-29T02:00:00"),
+      startDate = new Date("2023-05-29T00:00:00"),
       maxTransfer = defaultMaxTransfer,
       maxCost = defaultMaxCost,
       maxWalking = defaultMaxWalking,
@@ -135,6 +135,7 @@ const findTaxiPath = async (req, res) => {
         reachedInfos,
         transferNum,
         endMarkedStations: endTaxiMarkedStations,
+        isLastWalking: false,
         startLng,
         startLat,
         endLng,
@@ -177,8 +178,6 @@ const findTaxiPath = async (req, res) => {
         maxCost,
         maxWalking,
       }));
-
-      console.log(reachedInfos, transferNum);
 
       // 기존 길찾기 결과에서, 마지막 경로가 taxi 이동 허용하는 것 선택
       paths = mkPaths({
@@ -449,11 +448,12 @@ const mkPaths = ({
   reachedInfos,
   transferNum,
   endMarkedStations,
+  isLastWalking = true,
   startLat,
   startLng,
   endLat,
   endLng,
-  // ** 경로 세부정보 추가를 위한 데이터
+  // *** 경로 세부정보 추가를 위한 데이터
   stationInfos,
   routesByStation,
   tripsByRoute,
@@ -487,8 +487,10 @@ const mkPaths = ({
         nowReachedInfo = lastReachedInfo,
         prevReachedInfo;
       let station = endStation;
+
       for (let j = i; j > 0; j--) {
         if (nowReachedInfo.prevRouteId === walkingRouteId) {
+          // 마지막 역부터 시작
           if (nowReachedInfo.prevStationId === null) {
             // -> 출발지
             break;
@@ -509,13 +511,6 @@ const mkPaths = ({
             endName: stationInfos[station].stationName,
             departureTime: nowReachedInfo.arrTime,
           });
-
-          station = nowReachedInfo.prevStationId;
-          nowReachedInfo = prevReachedInfo;
-        } else if (nowReachedInfo.prevRouteId === taxiRouteId) {
-          prevReachedInfo = reachedInfos[j][nowReachedInfo.prevStationId];
-
-          // TODO: taxi 경우도 추가 필요
 
           station = nowReachedInfo.prevStationId;
           nowReachedInfo = prevReachedInfo;
@@ -623,15 +618,15 @@ const mkPaths = ({
       });
       if (nowReachedInfo.prevRouteId === walkingRouteId) {
         nowPath.subPath[0] = {
-          ...nowPath.subPath[0],
           trafficType: walking,
+          ...nowPath.subPath[0],
           sectionTime: nowReachedInfo.walkingTime,
         };
       } else {
         // taxiRouteId
         nowPath.subPath[0] = {
-          ...nowPath.subPath[0],
           trafficType: taxi,
+          ...nowPath.subPath[0],
           sectionTime: nowReachedInfo.taxiTime,
           payment: getTaxiCostFromDist({
             dist: haversine(
@@ -651,7 +646,6 @@ const mkPaths = ({
 
       // 도착지 -> 마지막역 정보 추가
       nowPath.subPath.push({
-        trafficType: walking,
         sectionTime: nowReachedInfo.walkingTime - prevReachedInfo.walkingTime,
         startX: stationInfos[endStation].lng,
         startY: stationInfos[endStation].lat,
@@ -660,19 +654,19 @@ const mkPaths = ({
         startName: stationInfos[endStation].stationName,
         endName: "도착지", // TODO: 도착 위치 이름 변경
       });
-      if (lastReachedInfo.prevRouteId === walkingRouteId) {
-        nowPath.subPath[i] = {
-          ...nowPath.subPath[i],
+      if (isLastWalking) {
+        nowPath.subPath[i + 1] = {
           trafficType: walking,
+          ...nowPath.subPath[i + 1],
           sectionTime: getTimeFromDist({
             dist: haversine(
               {
-                latitude: nowPath.subPath[i].startY,
-                longitude: nowPath.subPath[i].startX,
+                latitude: nowPath.subPath[i + 1].startY,
+                longitude: nowPath.subPath[i + 1].startX,
               },
               {
-                latitude: nowPath.subPath[i].endY,
-                longitude: nowPath.subPath[i].endX,
+                latitude: nowPath.subPath[i + 1].endY,
+                longitude: nowPath.subPath[i + 1].endX,
               },
               { unit: "meter" }
             ),
@@ -680,18 +674,18 @@ const mkPaths = ({
         };
       } else {
         // taxiRouteId
-        nowPath.subPath[i] = {
-          ...nowPath.subPath[i],
+        nowPath.subPath[i + 1] = {
           trafficType: taxi,
+          ...nowPath.subPath[i + 1],
           sectionTime: getTimeFromDist({
             dist: haversine(
               {
-                latitude: nowPath.subPath[0].startY,
-                longitude: nowPath.subPath[0].startX,
+                latitude: nowPath.subPath[i + 1].startY,
+                longitude: nowPath.subPath[i + 1].startX,
               },
               {
-                latitude: nowPath.subPath[0].endY,
-                longitude: nowPath.subPath[0].endX,
+                latitude: nowPath.subPath[i + 1].endY,
+                longitude: nowPath.subPath[i + 1].endX,
               },
               { unit: "meter" }
             ),
@@ -1516,7 +1510,7 @@ const findNeighbors = (hash) => {
 };
 
 // *** 거리 <-> 시간 관련 함수
-const getTimeFromDist = ({ dist, isWalking = True }) => {
+const getTimeFromDist = ({ dist, isWalking = true }) => {
   let time;
   if (isWalking) {
     time = Math.round(dist / walkingUnit);
