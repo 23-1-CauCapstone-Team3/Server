@@ -114,6 +114,8 @@
             totalWalkingTime: 총 도보 이동 시간, (** 다름)
             totalTime: 총 소요시간,
             payment: 총 요금,
+            taxiPayment: 택시 요금,
+            transportPayment: 대중교통 총 요금,
             transferCount: 환승 카운트, (** 다름)
             firstStartStation: 첫 출발역,
             lastEndStation: 최종 도착역,
@@ -129,7 +131,10 @@
                 lane: [
                     {
                         name: 지하철 노선명,
+                        subwayCode: 지하철 노선 코드명,
                         busNo: 버스 번호,
+                        type: 버스 타입,
+                        departureTime: 도착시간
                     }
                 ],
                 startName: 승차 정류장명,

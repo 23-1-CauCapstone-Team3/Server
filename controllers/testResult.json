@@ -1,25 +1,24 @@
-[
-  {
+{
+  "pathExistence": true,
+  "pathInfo": {
     "info": {
-      "totalWalkingTime": 20,
-      "totalTime": 55,
-      "transitCount": 1,
+      "totalTime": 82,
+      "transferCount": 1,
       "lastEndStation": "노들섬",
-      "busStationCount": 1,
-      "subwayStationCount": 0,
+      "totalWalkTime": 47,
       "firstStartStation": "석수역",
-      "totalStationCount": 1
+      "payment": 0
     },
     "subPath": [
       {
         "trafficType": 3,
-        "sectionTime": 20,
-        "startX": "126.90588251620562 ",
+        "startX": "126.90588251620562",
         "startY": "37.440323518775536",
         "endX": 126.9033111,
         "endY": 37.4355241,
-        "startName": "출발",
+        "startName": "출발지",
         "endName": "석수역",
+        "sectionTime": 58,
         "steps": [
           {
             "type": "Feature",
@@ -153,7 +152,8 @@
               "coordinates": [126.90329822885192, 37.435524117300524]
             }
           }
-        ]
+        ],
+        "distance": 761
       },
       {
         "trafficType": 2,
@@ -161,302 +161,346 @@
         "stationCount": 38,
         "lane": [
           {
-            "busNo": "507"
+            "busNo": "507",
+            "type": 11,
+            "busLocalBlID": "100100082",
+            "departureTime": 1107
           }
         ],
         "startName": "석수역",
         "startX": 126.9033111,
         "startY": 37.4355241,
+        "startLocalStationID": 117000084,
         "endName": "노들섬",
         "endX": 126.9590376,
         "endY": 37.5173638,
+        "endLocalStationID": 102000248,
         "passStopList": {
           "stations": [
             {
               "index": 0,
               "stationName": "석수역",
-              "arrTime": 1443,
               "x": 126.9033111,
-              "y": 37.4355241
+              "y": 37.4355241,
+              "departureTime": 1055,
+              "localStationID": 117000084
             },
             {
               "index": 1,
               "stationName": "시흥3동주민센터앞",
-              "arrTime": 1443,
               "x": 126.9036271,
-              "y": 37.440167
+              "y": 37.440167,
+              "departureTime": 1055,
+              "localStationID": 117000083
             },
             {
               "index": 2,
               "stationName": "박미마을.금천고등학교",
-              "arrTime": 1445,
               "x": 126.9039638,
-              "y": 37.443212
+              "y": 37.443212,
+              "departureTime": 1057,
+              "localStationID": 117000081
             },
             {
               "index": 3,
               "stationName": "금천폭포공원.천주교시흥성당",
-              "arrTime": 1447,
               "x": 126.903517,
-              "y": 37.4477127
+              "y": 37.4477127,
+              "departureTime": 1059,
+              "localStationID": 117000079
             },
             {
               "index": 4,
               "stationName": "백산초등학교",
-              "arrTime": 1447,
               "x": 126.904229,
-              "y": 37.4486234
+              "y": 37.4486234,
+              "departureTime": 1059,
+              "localStationID": 117000086
             },
             {
               "index": 5,
               "stationName": "은행나무입구사거리",
-              "arrTime": 1447,
               "x": 126.9060589,
-              "y": 37.4513327
+              "y": 37.4513327,
+              "departureTime": 1059,
+              "localStationID": 117000088
             },
             {
               "index": 6,
               "stationName": "경남아파트",
-              "arrTime": 1448,
               "x": 126.9062606,
-              "y": 37.4536154
+              "y": 37.4536154,
+              "departureTime": 1060,
+              "localStationID": 117000089
             },
             {
               "index": 7,
               "stationName": "시흥초등학교.금천구보훈회관",
-              "arrTime": 1449,
               "x": 126.9059442,
-              "y": 37.4553525
+              "y": 37.4553525,
+              "departureTime": 1061,
+              "localStationID": 117000091
             },
             {
               "index": 8,
               "stationName": "동산교회앞",
-              "arrTime": 1449,
               "x": 126.9056143,
-              "y": 37.4570265
+              "y": 37.4570265,
+              "departureTime": 1061,
+              "localStationID": 117000093
             },
             {
               "index": 9,
               "stationName": "현대시장.시흥4동주민센터",
-              "arrTime": 1450,
               "x": 126.9051695,
-              "y": 37.4592401
+              "y": 37.4592401,
+              "departureTime": 1062,
+              "localStationID": 117000095
             },
             {
               "index": 10,
               "stationName": "남부여성발전센터",
-              "arrTime": 1452,
               "x": 126.9043527,
-              "y": 37.4624573
+              "y": 37.4624573,
+              "departureTime": 1064,
+              "localStationID": 117000097
             },
             {
               "index": 11,
               "stationName": "독산동정훈단지",
-              "arrTime": 1452,
               "x": 126.903006,
-              "y": 37.4644522
+              "y": 37.4644522,
+              "departureTime": 1064,
+              "localStationID": 117000099
             },
             {
               "index": 12,
               "stationName": "독산4동주민센터",
-              "arrTime": 1453,
               "x": 126.9019814,
-              "y": 37.4673457
+              "y": 37.4673457,
+              "departureTime": 1065,
+              "localStationID": 117000102
             },
             {
               "index": 13,
               "stationName": "독산동성당앞",
-              "arrTime": 1453,
               "x": 126.9027437,
-              "y": 37.4697072
+              "y": 37.4697072,
+              "departureTime": 1065,
+              "localStationID": 117000104
             },
             {
               "index": 14,
               "stationName": "독산동쌈지공원",
-              "arrTime": 1453,
               "x": 126.9031805,
-              "y": 37.4711737
+              "y": 37.4711737,
+              "departureTime": 1065,
+              "localStationID": 117000106
             },
             {
               "index": 15,
               "stationName": "독산동남문시장",
-              "arrTime": 1454,
               "x": 126.9034139,
-              "y": 37.4733474
+              "y": 37.4733474,
+              "departureTime": 1066,
+              "localStationID": 117000141
             },
             {
               "index": 16,
               "stationName": "독산3동주민센터",
-              "arrTime": 1455,
               "x": 126.9036414,
-              "y": 37.4758229
+              "y": 37.4758229,
+              "departureTime": 1067,
+              "localStationID": 117000108
             },
             {
               "index": 17,
               "stationName": "모두의학교.금천문화예술정보학교",
-              "arrTime": 1456,
               "x": 126.9039351,
-              "y": 37.4786589
+              "y": 37.4786589,
+              "departureTime": 1068,
+              "localStationID": 117000110
             },
             {
               "index": 18,
               "stationName": "구로디지털단지역",
-              "arrTime": 1457,
               "x": 126.9024471,
-              "y": 37.4839345
+              "y": 37.4839345,
+              "departureTime": 1069,
+              "localStationID": 120000001
             },
             {
               "index": 19,
               "stationName": "동작상떼빌아파트",
-              "arrTime": 1458,
               "x": 126.904448,
-              "y": 37.486449
+              "y": 37.486449,
+              "departureTime": 1070,
+              "localStationID": 119000001
             },
             {
               "index": 20,
               "stationName": "대림동우체국",
-              "arrTime": 1458,
               "x": 126.9054525,
-              "y": 37.4894382
+              "y": 37.4894382,
+              "departureTime": 1070,
+              "localStationID": 118000175
             },
             {
               "index": 21,
               "stationName": "흰돌교회",
-              "arrTime": 1459,
               "x": 126.9032194,
-              "y": 37.4909422
+              "y": 37.4909422,
+              "departureTime": 1071,
+              "localStationID": 118000176
             },
             {
               "index": 22,
               "stationName": "대동초등학교",
-              "arrTime": 1460,
               "x": 126.9007387,
-              "y": 37.4939967
+              "y": 37.4939967,
+              "departureTime": 1072,
+              "localStationID": 118000177
             },
             {
               "index": 23,
               "stationName": "대림3동주민센터",
-              "arrTime": 1461,
               "x": 126.8988667,
-              "y": 37.4976454
+              "y": 37.4976454,
+              "departureTime": 1073,
+              "localStationID": 118000206
             },
             {
               "index": 24,
               "stationName": "국민은행",
-              "arrTime": 1461,
               "x": 126.898722,
-              "y": 37.500805
+              "y": 37.500805,
+              "departureTime": 1073,
+              "localStationID": 118000239
             },
             {
               "index": 25,
               "stationName": "신길건영아파트",
-              "arrTime": 1462,
               "x": 126.9020517,
-              "y": 37.503563
+              "y": 37.503563,
+              "departureTime": 1074,
+              "localStationID": 118000531
             },
             {
               "index": 26,
               "stationName": "대영고등학교.신길센트럴아이파크",
-              "arrTime": 1462,
               "x": 126.90482,
-              "y": 37.5048502
+              "y": 37.5048502,
+              "departureTime": 1074,
+              "localStationID": 118000492
             },
             {
               "index": 27,
               "stationName": "신풍시장",
-              "arrTime": 1463,
               "x": 126.9101667,
-              "y": 37.5057447
+              "y": 37.5057447,
+              "departureTime": 1075,
+              "localStationID": 118000535
             },
             {
               "index": 28,
               "stationName": "신길가마산로교차로",
-              "arrTime": 1463,
               "x": 126.9111162,
-              "y": 37.5065149
+              "y": 37.5065149,
+              "departureTime": 1075,
+              "localStationID": 118000595
             },
             {
               "index": 29,
               "stationName": "우신초등학교",
-              "arrTime": 1464,
               "x": 126.9109396,
-              "y": 37.5092523
+              "y": 37.5092523,
+              "departureTime": 1076,
+              "localStationID": 118000153
             },
             {
               "index": 30,
               "stationName": "신길동홍어거리",
-              "arrTime": 1464,
               "x": 126.9115715,
-              "y": 37.5107942
+              "y": 37.5107942,
+              "departureTime": 1076,
+              "localStationID": 118000155
             },
             {
               "index": 31,
               "stationName": "대신시장",
-              "arrTime": 1464,
               "x": 126.9164648,
-              "y": 37.5117299
+              "y": 37.5117299,
+              "departureTime": 1076,
+              "localStationID": 118000143
             },
             {
               "index": 32,
               "stationName": "신길새마을금고",
-              "arrTime": 1465,
               "x": 126.9200351,
-              "y": 37.5136409
+              "y": 37.5136409,
+              "departureTime": 1077,
+              "localStationID": 118000141
             },
             {
               "index": 33,
               "stationName": "대방역",
-              "arrTime": 1465,
               "x": 126.9248245,
-              "y": 37.5126573
+              "y": 37.5126573,
+              "departureTime": 1077,
+              "localStationID": 118000015
             },
             {
               "index": 34,
               "stationName": "현대아파트",
-              "arrTime": 1466,
               "x": 126.931437,
-              "y": 37.513174
+              "y": 37.513174,
+              "departureTime": 1078,
+              "localStationID": 119000007
             },
             {
               "index": 35,
               "stationName": "노량진수산시장.CTS기독교TV",
-              "arrTime": 1467,
               "x": 126.938456,
-              "y": 37.513423
+              "y": 37.513423,
+              "departureTime": 1079,
+              "localStationID": 119000009
             },
             {
               "index": 36,
               "stationName": "노량진역",
-              "arrTime": 1467,
               "x": 126.943811,
-              "y": 37.513733
+              "y": 37.513733,
+              "departureTime": 1079,
+              "localStationID": 119000011
             },
             {
               "index": 37,
               "stationName": "노들역",
-              "arrTime": 1468,
               "x": 126.949256,
-              "y": 37.512825
+              "y": 37.512825,
+              "departureTime": 1080,
+              "localStationID": 119000013
             },
             {
               "index": 38,
               "stationName": "노들섬",
-              "arrTime": 1469,
               "x": 126.9590376,
-              "y": 37.5173638
+              "y": 37.5173638,
+              "departureTime": 1081,
+              "localStationID": 102000248
             }
           ]
         }
       },
       {
         "trafficType": 3,
-        "sectionTime": 20,
+        "sectionTime": 152,
         "startX": 126.9590376,
         "startY": 37.5173638,
         "endX": "126.95827837166043",
         "endY": "37.50515428235182",
         "startName": "노들섬",
-        "endName": "도착",
+        "endName": "도착지",
         "steps": [
           {
             "type": "Feature",
@@ -787,8 +831,9 @@
               "coordinates": [126.95819682695878, 37.505183672375715]
             }
           }
-        ]
+        ],
+        "distance": 1974
       }
     ]
   }
-]
+}
