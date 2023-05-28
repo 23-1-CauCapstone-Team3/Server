@@ -27,13 +27,13 @@ const findTaxiPath = async (req, res) => {
       startY: startLat,
       endX: endLng,
       endY: endLat,
-      startDate = new Date(),
-      walkingUnit = DEFAULT_WALKING_UNIT,
-      taxiUnit = DEFAULT_TAXI_UNIT,
+      time: startDate = new Date(),
+      walkSpeed: walkingUnit = DEFAULT_WALKING_UNIT,
+      taxiSpeed: taxiUnit = DEFAULT_TAXI_UNIT,
       maxTransfer = DEFAULT_MAX_TRANSFER,
       maxCost = DEFAULT_MAX_COST,
-      maxWalking = DEFAULT_MAX_WALKING,
-      maxWalkingPerEachStep = DEFAULT_MAX_WALKING_PER_STEP,
+      maxTotalWalkTime: maxWalking = DEFAULT_MAX_WALKING,
+      maxWalkTimePerStep: maxWalkingPerEachStep = DEFAULT_MAX_WALKING_PER_STEP,
     } = req.query;
 
     startDate = new Date(startDate);
@@ -585,14 +585,14 @@ const mkPaths = ({
           nowPath.subPath.unshift({
             trafficType: TRAIN_CODE,
             stationCount: cnt - 1,
-            sectionTime: nowReachedInfo.arrTIme - prevReachedInfo.arrTime,
+            sectionTime: nowReachedInfo.arrTime - prevReachedInfo.arrTime,
             lane: [
               {
                 name: nowReachedInfo.prevRouteId.slice(0, -2), // (-1, -2 제거)
                 subwayCode: getTrainCode(
                   nowReachedInfo.prevRouteId.slice(0, -2)
                 ),
-                departureTime: nowReachedInfo.arrTIme,
+                departureTime: nowReachedInfo.arrTime,
               },
             ],
             startName: stationInfos[nowReachedInfo.prevStationId].stationName,
@@ -601,7 +601,7 @@ const mkPaths = ({
             endName: stationInfos[station].stationName,
             endX: stationInfos[station].lng,
             endY: stationInfos[station].lat,
-            // way: // TODO: 방면 정보 추가
+            way: endName,
             wayCode: parseInt(nowReachedInfo.prevRouteId.slice(-2, 0)),
             passStopList,
           });
@@ -1294,7 +1294,7 @@ const getTrainCode = (trainRouteName) => {
   return trainCodeDict[trainRouteName];
 };
 
-// *** arrTIme에 맞는 trip 정보 가져오는 함수
+// *** arrTime에 맞는 trip 정보 가져오는 함수
 const getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
   // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠 -> radius walkingUnit 등 모든 상수 리팩토링 필요
   if (checkIsBusStation(station)) {
