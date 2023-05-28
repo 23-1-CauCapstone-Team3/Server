@@ -30,64 +30,78 @@
 
 ```
 {
+    departureTime: 출발 시간,
+    arrivalTime: 도착 시간,
     pathExistance: boolean,
     pathInfo: {
-        totalWalkTime: 총 도보 이동 시간,
-        totalTime: 총 소요시간,
-        payment: 총 요금,
-        taxiPayment: 택시 요금,
-        transportPayment: 대중교통 총 요금,
-        transferCount: 환승 카운트,
-        firstStartStation: 첫 출발역,
-        lastEndStation: 최종 도착역,
-    },
-    subPath: [
-        {
-            trafficType: 이동 수단 종류 (1-지하철, 2-버스, 3-도보, 4-환승 도보, 5-택시),
-            sectionTime: 이동 소요 시간,
-            stationCount: 이동하여 정차하는 정거장 수,
-            lane: [
-                {
-                    name: 지하철 노선명,
-                    subwayCode: 지하철 노선 코드,
-                    busNo: 버스명,
-                    type: 버스 타입 코드,
-                    busLocalBlID: 버스 노선 코드,
-                    departureTime: 도착시간
-                }
-            ],
-            startName: 승차 정류장명,
-            startX,
-            startY,
-            startLocalStationId: 승차 정류장 버스 노선 코드,
-            endName: 하차 정류장명,
-            endX,
-            endY,
-            endLocalStationId: 하차 정류장 버스 노선 코드,
-            way: 지하철 방면 정보,
-            wayCode: 지하철 방면 정보 코드 (1-상행, 2-하행),
-            passStopList: {
-                stations: [
+        info: {
+            departureTime: 출발 시간,
+            arrivalTime: 도착 시간,
+            transferCount: 환승 횟수,
+            firstStartStation: 첫 출발역,
+            lastEndStation: 최종 도착역,
+            totalTime: 총 소요시간,
+            totalWalkTime: 총 도보 이동 시간,
+            totalTaxiTime: 총 택시 이동 시간,
+            payment: 총 요금,
+            taxiPayment: 택시 요금,
+            transportPayment: 대중교통 총 요금,
+        },
+        subPath: [
+            {
+                trafficType: 이동 수단 종류 (1-지하철, 2-버스, 3-도보, 4-환승 도보, 5-택시),
+                sectionTime: 이동 소요 시간,
+                taxiPayment: 택시 비용,
+                departureTime: 도보/택시 출발 시간,
+                arrivalTime: 도보/택시 도착 시간,
+                stationCount: 버스/지하철 이동하여 정차하는 정거장 수,
+                lane: [
                     {
-                        index: 순서,
-                        stationName: 정류장 이름,
-                        localStationID: 버스 정류장 코드,
-                        departureTime: 도착 시간,
-                        x,
-                        y,
+                        busNo: 버스명,
+                        type: 버스 타입 코드,
+                        busLocalBlID: 버스 노선 코드,
+                        name: 지하철 노선명,
+                        subwayCode: 지하철 노선 코드,
+                        departureTime: 버스/지하철 출발 시간,
+                        arrivalTime: 버스/지하철 도착시간
+                    }
+                ],
+                startName: 승차 정류장명,
+                startX,
+                startY,
+                startLocalStationID: 승차 정류장 버스역 코드,
+                startStationID: 승차 정류장 지하철 역코드,
+                endName: 하차 정류장명,
+                endX,
+                endY,
+                endLocalStationID: 하차 정류장 버스역 코드,
+                endStationID: 하차 정류장 지하철 역코드,
+                way: 지하철 방면 정보,
+                wayCode: 지하철 방면 정보 코드 (1-상행, 2-하행),
+                passStopList: {
+                    stations: [
+                        {
+                            index: 순서,
+                            stationName: 정류장 이름,
+                            arrivalTime: 도착 시간,
+                            x,
+                            y,
+                            localStationID: 버스 정류장 코드,
+                            stationID: 지하철 정류장 코드
+                        }
+                    ]
+                },
+                steps: [
+                    {
+                        type: 종류 문자열,
+                        geometry: [
+                            type: 종류 문자열,
+                            coordinates: [lat, lng]
+                        ]
                     }
                 ]
-            },
-            steps: [
-                {
-                    type: 종류 문자열,
-                    geometry: [
-                        type: 종류 문자열,
-                        coordinates: [lat, lng]
-                    ]
-                }
-            ]
-        }
-    ]
+            }
+        ]
+    }
 }
 ```

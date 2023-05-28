@@ -20,6 +20,12 @@ const DEFAULT_MAX_WALKING_PER_STEP = 20;
 const WALKING_ROUTE_ID = "walking";
 const TAXI_ROUTE_ID = "taxi";
 
+const TRAIN_CODE = 1,
+  BUS_CODE = 2,
+  WALKING_CODE = 3,
+  TRANSFER_WALKING_CODE = 4,
+  TAXI_CODE = 5;
+
 const findTaxiPath = async (req, res) => {
   try {
     let {
@@ -207,15 +213,15 @@ const findTaxiPath = async (req, res) => {
       maxWalking,
     });
 
-    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    const resultPaths = await addRealtimeInfos({
-      startDate,
-      paths: [selectedPaths[0]],
-    });
+    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    // const resultPaths = await addRealtimeInfos({
+    //   startDate,
+    //   paths: [selectedPaths[0]],
+    // });
 
     res.send({
       pathExistence: true,
-      pathInfo: resultPaths[0],
+      pathInfo: selectedPaths[0],
     });
   } catch (err) {
     console.log(err);
@@ -290,7 +296,8 @@ const raptorAlg = ({
     // 2-a. 같은 노선에 대해 더 이른 역에서 탑승할 수 있는 경우, 그 역에서 타면 됨
     // TODO: 급행 고려 필요 <- 급행 시간 잘 파악해보고, 늦은 시간에도 급행 다닌다면 고려해야 함
     for (const station of markedStations) {
-      // TODO: 왜 routesByStation[station]에서 undefined 나오는지? stationId == 118000006
+      // TODO: routesByStation[station]에서 undefined 나오는 경우 존재 -> stationId == 118000006
+      // -> 없는 노선 없도록, bus 정보 다 주면 그때 다시 제대로 join하기
       // console.log(station, routesByStation[station]);
       if (routesByStation[station] === undefined) continue;
 
@@ -456,12 +463,6 @@ const mkPaths = ({
   walkingUnit,
   taxiUnit,
 }) => {
-  const TRAIN_CODE = 1,
-    BUS_CODE = 2,
-    WALKING_CODE = 3,
-    TRANSFER_WALKING_CODE = 4,
-    TAXI_CODE = 5;
-
   const paths = [];
 
   // 환승이 적은 것부터,
@@ -473,12 +474,11 @@ const mkPaths = ({
       // j번 환승을 통해 station에 도달한 경우
       const nowPath = {
         info: {
-          totalTime: reachedInfos[i][endStation].arrTime - startTime, // TODO: 마지막 도보 더하기
-          // payment, // TODO
-          transferCount: i,
-          // firstStartStation -> 맨 마지막에
-          lastEndStation: stationInfos[endStation].stationName,
           totalWalkTime: reachedInfos[i][endStation].walkingTime,
+          totalTaxiTime: 0,
+          payment: 0,
+          taxiPayment: 0,
+          transportPayment: 0, // TODO: 대중교통 총 요금
         },
         subPath: [],
       };
@@ -503,13 +503,14 @@ const mkPaths = ({
             trafficType: TRANSFER_WALKING_CODE,
             sectionTime:
               nowReachedInfo.walkingTime - prevReachedInfo.walkingTime,
+            departureTime: prevReachedInfo.arrTime,
+            arrivalTime: nowReachedInfo.arrTime,
+            startName: stationInfos[nowReachedInfo.prevStationId].stationName,
             startX: stationInfos[nowReachedInfo.prevStationId].lng,
             startY: stationInfos[nowReachedInfo.prevStationId].lat,
+            endName: stationInfos[station].stationName,
             endX: stationInfos[station].lng,
             endY: stationInfos[station].lat,
-            startName: stationInfos[nowReachedInfo.prevStationId].stationName,
-            endName: stationInfos[station].stationName,
-            departureTime: nowReachedInfo.arrTime,
           });
 
           station = nowReachedInfo.prevStationId;
@@ -519,28 +520,31 @@ const mkPaths = ({
         prevReachedInfo = reachedInfos[j - 1][nowReachedInfo.prevStationId];
 
         // 한 대중교통 이동의 세부 경로 계산
+        let term =
+          nowReachedInfo.prevRouteId in busRouteInfos
+            ? busRouteInfos[nowReachedInfo.prevRouteId].term
+            : -1;
         const trip = getNowTrip({
           trip: tripsByRoute[nowReachedInfo.prevRouteId],
           station,
-          term:
-            nowReachedInfo.prevRouteId in busRouteInfos
-              ? busRouteInfos[nowReachedInfo.prevRouteId].term
-              : -1,
+          term,
           arrTime: prevReachedInfo.arrTime,
         });
+        term = trip[0].arrTime - startTime; // 추후 departureTime = 직전 arrTime + term 으로 계산할 예정
+
         const passStopList = { stations: [] };
 
         let cnt = 0;
         let prevId = null;
         for (let i = nowReachedInfo.prevIndex; i <= nowReachedInfo.index; i++) {
-          if (prevId === trip[i].stationId) continue;
+          if (prevId === trip[i].stationId) continue; // trip에 중복역 연속으로 존재하는 경우
 
           passStopList.stations.push({
             index: cnt,
             stationName: stationInfos[trip[i].stationId].stationName,
+            arrivalTime: trip[i].arrTime,
             x: stationInfos[trip[i].stationId].lng,
             y: stationInfos[trip[i].stationId].lat,
-            departureTime: trip[i].arrTime,
           });
 
           if (checkIsBusStation(trip[i].stationId)) {
@@ -567,7 +571,8 @@ const mkPaths = ({
                   busRouteInfos[nowReachedInfo.prevRouteId].routeName
                 ),
                 busLocalBlID: nowReachedInfo.prevRouteId,
-                departureTime: nowReachedInfo.arrTime,
+                departureTime: prevReachedInfo.arrTime + term,
+                arrivalTime: nowReachedInfo.arrTime,
               },
             ],
             startName: stationInfos[nowReachedInfo.prevStationId].stationName,
@@ -592,15 +597,18 @@ const mkPaths = ({
                 subwayCode: getTrainCode(
                   nowReachedInfo.prevRouteId.slice(0, -2)
                 ),
-                departureTime: nowReachedInfo.arrTime,
+                departureTime: prevReachedInfo.arrTime + term,
+                arrivalTime: nowReachedInfo.arrTime,
               },
             ],
             startName: stationInfos[nowReachedInfo.prevStationId].stationName,
             startX: stationInfos[nowReachedInfo.prevStationId].lng,
             startY: stationInfos[nowReachedInfo.prevStationId].lat,
+            startStationID: nowReachedInfo.prevStationId,
             endName: stationInfos[station].stationName,
             endX: stationInfos[station].lng,
             endY: stationInfos[station].lat,
+            endStationID: station,
             way: endName,
             wayCode: parseInt(nowReachedInfo.prevRouteId.slice(-2, 0)),
             passStopList,
@@ -613,109 +621,124 @@ const mkPaths = ({
 
       // 첫역 -> 출발지 정보 추가
       nowPath.subPath.unshift({
+        departureTime: startTime,
+        arrivalTime: nowReachedInfo.arrTime,
         startX: startLng,
         startY: startLat,
+        startName: "출발지",
         endX: stationInfos[station].lng,
         endY: stationInfos[station].lat,
-        startName: "출발지",
         endName: stationInfos[station].stationName,
       });
+      let dist = haversine(
+        {
+          latitude: nowPath.subPath[0].startY,
+          longitude: nowPath.subPath[0].startX,
+        },
+        {
+          latitude: nowPath.subPath[0].endY,
+          longitude: nowPath.subPath[0].endX,
+        },
+        { unit: "meter" }
+      );
+
       if (nowReachedInfo.prevRouteId === WALKING_ROUTE_ID) {
         nowPath.subPath[0] = {
           trafficType: WALKING_CODE,
-          ...nowPath.subPath[0],
           sectionTime: nowReachedInfo.walkingTime,
+          ...nowPath.subPath[0],
         };
       } else {
         // taxiRouteId
         nowPath.subPath[0] = {
           trafficType: TAXI_CODE,
-          ...nowPath.subPath[0],
           sectionTime: nowReachedInfo.taxiTime,
-          payment: getTaxiCostFromDist({
-            dist: haversine(
-              {
-                latitude: nowPath.subPath[0].startY,
-                longitude: nowPath.subPath[0].startX,
-              },
-              {
-                latitude: nowPath.subPath[0].endY,
-                longitude: nowPath.subPath[0].endX,
-              },
-              { unit: "meter" }
-            ),
+          taxiPayment: getTaxiCostFromDist({
+            dist,
+            taxiUnit,
+            isWalking: false,
           }),
+          ...nowPath.subPath[0],
         };
+
+        nowPath.info.totalTaxiTime += nowPath.subPath[0].sectionTime;
+        nowPath.info.taxiPayment += nowPath.subPath[0].taxiPayment;
+        nowPath.info.payment += nowPath.subPath[0].taxiPayment;
       }
 
       // 도착지 -> 마지막역 정보 추가
       nowPath.subPath.push({
-        sectionTime: nowReachedInfo.walkingTime - prevReachedInfo.walkingTime,
         startX: stationInfos[endStation].lng,
         startY: stationInfos[endStation].lat,
         endX: endLng,
         endY: endLat,
         startName: stationInfos[endStation].stationName,
-        endName: "도착지", // TODO: 도착 위치 이름 변경
+        endName: "도착지",
       });
+
+      dist = haversine(
+        {
+          latitude: nowPath.subPath[i + 1].startY,
+          longitude: nowPath.subPath[i + 1].startX,
+        },
+        {
+          latitude: nowPath.subPath[i + 1].endY,
+          longitude: nowPath.subPath[i + 1].endX,
+        },
+        { unit: "meter" }
+      );
       if (isLastWalking) {
         nowPath.subPath[i + 1] = {
           trafficType: WALKING_CODE,
           ...nowPath.subPath[i + 1],
           sectionTime: getTimeFromDist({
-            dist: haversine(
-              {
-                latitude: nowPath.subPath[i + 1].startY,
-                longitude: nowPath.subPath[i + 1].startX,
-              },
-              {
-                latitude: nowPath.subPath[i + 1].endY,
-                longitude: nowPath.subPath[i + 1].endX,
-              },
-              { unit: "meter" }
-            ),
+            dist,
             walkingUnit,
           }),
         };
+
+        // 도보 이동시간 추가
+        nowPath.info.totalWalkTime += nowPath.subPath[i + 1].sectionTime;
       } else {
         // taxiRouteId
         nowPath.subPath[i + 1] = {
           trafficType: TAXI_CODE,
           ...nowPath.subPath[i + 1],
           sectionTime: getTimeFromDist({
-            dist: haversine(
-              {
-                latitude: nowPath.subPath[i + 1].startY,
-                longitude: nowPath.subPath[i + 1].startX,
-              },
-              {
-                latitude: nowPath.subPath[i + 1].endY,
-                longitude: nowPath.subPath[i + 1].endX,
-              },
-              { unit: "meter" }
-            ),
+            dist,
             taxiUnit,
             isWalking: false,
           }),
-          payment: lastReachedInfo.taxiCost,
+          taxiPayment: getTaxiCostFromDist({
+            dist,
+            arrTime: nowPath.subPath[i].arrTime,
+          }),
         };
+
+        // 택시 이동시간, 택시비 추가
+        nowPath.info.totalTaxiTime += nowPath.subPath[i + 1].sectionTime;
+        nowPath.info.taxiPayment += nowPath.subPath[i + 1].taxiPayment;
+        nowPath.info.payment += nowPath.subPath[i + 1].taxiPayment;
       }
+
+      nowPath.subPath[i + 1] = {
+        departureTime: lastReachedInfo.arrTime,
+        arrivalTime:
+          lastReachedInfo.arrTime + nowPath.subPath[i + 1].sectionTime,
+        ...nowPath.subPath[i + 1],
+      };
 
       // 도착지 -> 마지막역 정보 추가
       // 첫 역 정보를 알아야지만 계산 가능한 정보 추가
-      nowPath.info.firstStartStation = stationInfos[station].stationName;
-      nowPath.info.totalTime =
-        nowPath.info.totalTime + nowPath.subPath[i + 1].sectionTime;
-      // TODO: 대중교통 비용 추가
-      nowPath.info.payment = 0;
-      if (isLastWalking) {
-        nowPath.info.totalWalkTime =
-          nowPath.info.totalWalkTime + nowPath.subPath[i + 1].sectionTime;
-      } else {
-        // TODO: 택시비
-        nowPath.info.payment =
-          nowPath.info.payment + nowPath.subPath[i + 1].payment;
-      }
+      nowPath.info = {
+        departureTime: startTime,
+        arrivalTime: nowPath.subPath[i + 1].arrivalTime,
+        transferCount: i,
+        firstStartStation: stationInfos[station].stationName,
+        lastEndStation: stationInfos[endStation].stationName,
+        totalTime: nowPath.subPath[i + 1].arrivalTime - startTime,
+        ...nowPath.info, // TODO: 대중교통 비용 추가
+      };
 
       // path 정보 추가
       paths.push(nowPath);
@@ -1458,7 +1481,6 @@ const getFinalInfo = ({
   }
 
   // taxi로 빼게 될 경우
-  // TODO: defaultMaxWalking이 아닌, 실제 함수에서 입력받은 값으로 설정되도록 수정
   if (!isWalking) {
     const beforeCheckedStations = getFinalInfo({
       endGeohash,

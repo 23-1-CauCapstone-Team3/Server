@@ -108,7 +108,6 @@
                 arrTime,
                 walkingTime,
                 taxiTime,
-                taxiCost,
                 index,
                 prevStationId,
                 prevRouteId,
