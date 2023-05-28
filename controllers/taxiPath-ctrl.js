@@ -153,7 +153,10 @@ const findTaxiPath = async (req, res) => {
         startGeohash: geohash.encode(startLat, startLng),
         startTime,
         stationsByGeohash,
-        radius: getDistFromTaxiCost({ cost: maxCost, arrTime: 24 * 60 }), // TODO: arrTime 세밀하게 조정
+        radius: getDistFromTaxiCost({
+          cost: maxCost,
+          arrTime: getTimeFromDate(startDate),
+        }),
         walkingRadius: maxWalkingPerEachStep * walkingUnit,
         walkingUnit,
         taxiUnit,
@@ -206,18 +209,18 @@ const findTaxiPath = async (req, res) => {
     }
 
     // 5. paths들 추려내기
-    const selectedPaths = selectAndSortPaths({
+    let selectedPaths = selectAndSortPaths({
       paths,
       // *** alg setting
       maxCost,
       maxWalking,
     });
 
-    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    // const resultPaths = await addRealtimeInfos({
-    //   startDate,
-    //   paths: [selectedPaths[0]],
-    // });
+    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    selectedPaths = await addRealtimeInfos({
+      startDate,
+      paths: [selectedPaths[0]],
+    });
 
     res.send({
       pathExistence: true,
@@ -620,6 +623,17 @@ const mkPaths = ({
       }
 
       // 첫역 -> 출발지 정보 추가
+      let dist = haversine(
+        {
+          latitude: startLat,
+          longitude: startLng,
+        },
+        {
+          latitude: stationInfos[station].lng,
+          longitude: stationInfos[station].lat,
+        },
+        { unit: "meter" }
+      );
       nowPath.subPath.unshift({
         departureTime: startTime,
         arrivalTime: nowReachedInfo.arrTime,
@@ -630,17 +644,6 @@ const mkPaths = ({
         endY: stationInfos[station].lat,
         endName: stationInfos[station].stationName,
       });
-      let dist = haversine(
-        {
-          latitude: nowPath.subPath[0].startY,
-          longitude: nowPath.subPath[0].startX,
-        },
-        {
-          latitude: nowPath.subPath[0].endY,
-          longitude: nowPath.subPath[0].endX,
-        },
-        { unit: "meter" }
-      );
 
       if (nowReachedInfo.prevRouteId === WALKING_ROUTE_ID) {
         nowPath.subPath[0] = {
@@ -655,8 +658,7 @@ const mkPaths = ({
           sectionTime: nowReachedInfo.taxiTime,
           taxiPayment: getTaxiCostFromDist({
             dist,
-            taxiUnit,
-            isWalking: false,
+            arrTime: nowPath.subPath[0].arrivalTime,
           }),
           ...nowPath.subPath[0],
         };
@@ -667,7 +669,29 @@ const mkPaths = ({
       }
 
       // 도착지 -> 마지막역 정보 추가
+      dist = haversine(
+        {
+          latitude: stationInfos[endStation].lat,
+          longitude: stationInfos[endStation].lng,
+        },
+        {
+          latitude: endLat,
+          longitude: endLng,
+        },
+        { unit: "meter" }
+      );
+      sectionTime = getTimeFromDist({
+        dist,
+        walkingUnit,
+        taxiUnit,
+        isWalking: isLastWalking,
+      });
+
       nowPath.subPath.push({
+        sectionTime,
+        departureTime: lastReachedInfo.arrTime,
+        arrivalTime: lastReachedInfo.arrTime + sectionTime,
+        ...nowPath.subPath[i + 1],
         startX: stationInfos[endStation].lng,
         startY: stationInfos[endStation].lat,
         endX: endLng,
@@ -676,25 +700,10 @@ const mkPaths = ({
         endName: "도착지",
       });
 
-      dist = haversine(
-        {
-          latitude: nowPath.subPath[i + 1].startY,
-          longitude: nowPath.subPath[i + 1].startX,
-        },
-        {
-          latitude: nowPath.subPath[i + 1].endY,
-          longitude: nowPath.subPath[i + 1].endX,
-        },
-        { unit: "meter" }
-      );
       if (isLastWalking) {
         nowPath.subPath[i + 1] = {
           trafficType: WALKING_CODE,
           ...nowPath.subPath[i + 1],
-          sectionTime: getTimeFromDist({
-            dist,
-            walkingUnit,
-          }),
         };
 
         // 도보 이동시간 추가
@@ -704,40 +713,27 @@ const mkPaths = ({
         nowPath.subPath[i + 1] = {
           trafficType: TAXI_CODE,
           ...nowPath.subPath[i + 1],
-          sectionTime: getTimeFromDist({
-            dist,
-            taxiUnit,
-            isWalking: false,
-          }),
           taxiPayment: getTaxiCostFromDist({
             dist,
-            arrTime: nowPath.subPath[i].arrTime,
+            arrTime: nowPath.subPath[i + 1].arrivalTime,
           }),
         };
 
-        // 택시 이동시간, 택시비 추가
+        // 택시 이동시간 추가
         nowPath.info.totalTaxiTime += nowPath.subPath[i + 1].sectionTime;
         nowPath.info.taxiPayment += nowPath.subPath[i + 1].taxiPayment;
         nowPath.info.payment += nowPath.subPath[i + 1].taxiPayment;
       }
 
-      nowPath.subPath[i + 1] = {
-        departureTime: lastReachedInfo.arrTime,
-        arrivalTime:
-          lastReachedInfo.arrTime + nowPath.subPath[i + 1].sectionTime,
-        ...nowPath.subPath[i + 1],
-      };
-
-      // 도착지 -> 마지막역 정보 추가
       // 첫 역 정보를 알아야지만 계산 가능한 정보 추가
       nowPath.info = {
+        ...nowPath.info, // TODO: 대중교통 비용 추가
         departureTime: startTime,
         arrivalTime: nowPath.subPath[i + 1].arrivalTime,
         transferCount: i,
         firstStartStation: stationInfos[station].stationName,
         lastEndStation: stationInfos[endStation].stationName,
         totalTime: nowPath.subPath[i + 1].arrivalTime - startTime,
-        ...nowPath.info, // TODO: 대중교통 비용 추가
       };
 
       // path 정보 추가
@@ -868,10 +864,23 @@ const addRealtimeInfos = async ({ startDate, paths }) => {
 };
 
 const addEachRealtimeInfo = async ({ startDate, path }) => {
-  const { SK_KEY, SK_WALKING_URL } = process.env;
+  const { SK_KEY, SK_WALKING_URL, SK_TAXI_URL } = process.env;
   const newPath = { ...path, subPath: [] };
+  newPath.info = {
+    ...newPath.info,
+    totalWalkTime: 0,
+    totalTaxiTime: 0,
+    payment: 0,
+    taxiPayment: 0,
+    transportPayment: 0, // TODO: 대중교통 총 요금
+  };
 
+  let departureTime,
+    arrivalTime,
+    diff = 0;
   for (const subPath of path.subPath) {
+    let newSubPath;
+
     if (
       subPath.trafficType === WALKING_CODE ||
       subPath.trafficType === TRANSFER_WALKING_CODE
@@ -893,9 +902,8 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
             return data;
           });
 
-        newPath.subPath.push({
+        newSubPath = {
           ...subPath,
-          // TODO: 소요시간 정보 보정
           steps: response.features.map((el) => {
             return { type: el.type, geometry: el.geometry };
           }),
@@ -904,14 +912,28 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
           sectionTime: Math.round(
             response.features[0].properties.totalTime / 10
           ),
-        });
+        };
       } catch (err) {
         throw err;
       }
+
+      ({ departureTime, arrivalTime, diff } = updateTime({
+        departureTime: newSubPath.departureTime,
+        arrivalTime: newSubPath.arrivalTime,
+        diff,
+        sectionTime: newSubPath.sectionTime,
+        startDate,
+      }));
+
+      newSubPath.departureTime = departureTime;
+      newSubPath.arrivalTime = arrivalTime;
+
+      newPath.info.totalWalkTime += newSubPath.sectionTime;
     } else if (subPath.trafficType === TAXI_CODE) {
       // 택시
       const tmapBody = qs.stringify({
           ...subPath,
+          // TODO: gpsTime 넣어주기
         }),
         config = {
           headers: {
@@ -921,14 +943,13 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
 
       try {
         const response = await axios
-          .post(SK_WALKING_URL, tmapBody, config)
+          .post(SK_TAXI_URL, tmapBody, config)
           .then(({ data }) => {
             return data;
           });
 
-        newPath.subPath.push({
+        newSubPath = {
           ...subPath,
-          // TODO: 소요시간 정보 보정
           steps: response.features.map((el) => {
             return { type: el.type, geometry: el.geometry };
           }),
@@ -936,22 +957,79 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
           sectionTime: Math.round(
             response.features[0].properties.totalTime / 10
           ),
-          payment: response.features[0].properties.taxiFare, // TODO: * calcExtraTaxiCostPercentage(arrTime) 필요
-        });
+          taxiPayment: response.features[0].properties.taxiFare,
+        };
       } catch (err) {
         throw err;
       }
+
+      ({ departureTime, arrivalTime, diff } = updateTime({
+        departureTime: newSubPath.departureTime,
+        arrivalTime: newSubPath.arrivalTime,
+        diff,
+        sectionTime: newSubPath.sectionTime,
+        startDate,
+      }));
+
+      newSubPath.departureTime = departureTime;
+      newSubPath.arrivalTime = arrivalTime;
+      newSubPath.taxiPayment *= calcExtraTaxiCostPercentage(departureTime);
+
+      newPath.info.totalTaxiTime += newSubPath.sectionTime;
+      newPath.info.taxiPayment += newSubPath.taxiPayment;
+      newPath.info.payment += newSubPath.taxiPayment;
     } else {
       // 대중교통
       // TODO: 실시간 도착정보 추가
 
-      newPath.subPath.push({
+      newSubPath = {
         ...subPath,
-      });
+      };
+
+      ({ departureTime, arrivalTime, diff } = updateTime({
+        departureTime: newSubPath.lane[0].departureTime,
+        arrivalTime: newSubPath.lane[0].arrivalTime,
+        diff,
+        sectionTime: newSubPath.sectionTime,
+        startDate,
+      }));
+
+      newSubPath.lane[0].departureTime = departureTime;
+      newSubPath.lane[0].arrivalTime = arrivalTime;
     }
+
+    newPath.subPath.push(newSubPath);
   }
 
   return newPath;
+};
+
+// *** departureTime, arrivalTime을 update해주는 함수
+const updateTime = ({
+  departureTime,
+  arrivalTime,
+  diff,
+  sectionTime,
+  startDate,
+}) => {
+  let newDepartureTime = departureTime - diff;
+  let newArrivalTime = newDepartureTime + sectionTime;
+  diff += newArrivalTime - arrivalTime;
+
+  newDepartureTime = getDateFromTime({
+    time: newDepartureTime,
+    date: startDate,
+  })
+    .toISOString()
+    .slice(0, -5);
+  newArrivalTime = getDateFromTime({
+    time: newArrivalTime,
+    date: startDate,
+  })
+    .toISOString()
+    .slice(0, -5);
+
+  return { departureTime: newDepartureTime, arrivalTime: newArrivalTime, diff };
 };
 
 // *** date, time 관련 함수들
@@ -1038,13 +1116,29 @@ const getBusWeekFromWeek = (date) => {
   return busWeek;
 };
 
-const getTimeFromDate = (now) => {
-  let time = now.getHours() * 60 + now.getMinutes();
+const getTimeFromDate = (date) => {
+  let time = date.getHours() * 60 + date.getMinutes();
   if (time < 7 * 60) {
     time += 24 * 60;
   }
 
   return time;
+};
+
+const getDateFromTime = ({ time, date }) => {
+  const startTime = getTimeFromDate(date);
+
+  if (time > 24 * 60) {
+    time -= 24 * 60;
+
+    if (startTime < 24 * 60) {
+      // 하루 시간 지나야 함
+      date.setDate(date.getDate() + 1);
+    }
+  }
+
+  date.setHours(Math.floor(time / 60), time % 60);
+  return date;
 };
 
 // *** DB에서 데이터 불러오는 함수들
@@ -1319,7 +1413,7 @@ const getTrainCode = (trainRouteName) => {
 
 // *** arrTime에 맞는 trip 정보 가져오는 함수
 const getNowTrip = ({ route, trip, station, term = 15, arrTime = -1 }) => {
-  // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠 -> radius walkingUnit 등 모든 상수 리팩토링 필요
+  // TODO: 배차간격 없는 경우 일단 15분으로 처리해둠, 평균 확인해보기
   if (checkIsBusStation(station)) {
     // 버스
     // 배차간격 -1일 경우, 해당 요일에 운영 X
@@ -1671,7 +1765,7 @@ const getTimeFromDist = ({ dist, walkingUnit, taxiUnit, isWalking = true }) => {
   return time;
 };
 
-// *** 대중교통 거리 -> 비용 관련 함수
+// *** TODO: 대중교통 거리 -> 비용 관련 함수
 const getCostFromDist = ({ cost, arrTime }) => {};
 
 // *** 택시 비용 <-> 거리 관련 함수들
@@ -1682,17 +1776,18 @@ const getDistFromTaxiCost = ({ cost, arrTime }) => {
     return 1600;
   }
 
-  return ((cost / extraPercentage - 4800) / 100) * 131 - 1600;
+  return Math.round(((cost / extraPercentage - 4800) / 100) * 131 - 1600);
 };
 
-const getTaxiCostFromDist = ({ distance, arrTime }) => {
+const getTaxiCostFromDist = ({ dist, arrTime }) => {
+  // TODO: 택시비 알고리즘 개선
   const extraPercentage = calcExtraTaxiCostPercentage(arrTime);
 
-  if (distance <= 1600) {
+  if (dist <= 1600) {
     return 4800 * extraPercentage;
   }
 
-  return (4800 + ((distance - 1600) / 131) * 100) * extraPercentage;
+  return Math.round((4800 + ((dist - 1600) / 131) * 100) * extraPercentage);
 };
 
 const calcExtraTaxiCostPercentage = (arrTime) => {
