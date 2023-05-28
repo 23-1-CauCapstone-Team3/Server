@@ -24,30 +24,6 @@ const train = 1,
   walking = 3,
   transferWalking = 4,
   taxi = 5;
-const subwayCodeDict = {
-  "수도권 1호선": 1,
-  "수도권 2호선": 2,
-  "수도권 3호선": 3,
-  "수도권 4호선": 4,
-  "수도권 5호선": 5,
-  "수도권 6호선": 6,
-  "수도권 7호선": 7,
-  "수도권 8호선": 8,
-  "수도권 9호선": 9,
-  공항철도: 101,
-  자기부상철도: 102,
-  경의중앙선: 104,
-  에버라인: 107,
-  경춘선: 108,
-  신분당선: 109,
-  의정부경전철: 110,
-  경강선: 112,
-  우이신설선: 113,
-  서해선: 114,
-  김포골드라인: 115,
-  수인분당선: 116,
-  신림선: 117,
-};
 
 const findTaxiPath = async (req, res) => {
   try {
@@ -563,6 +539,9 @@ const mkPaths = ({
             lane: [
               {
                 busNo: busRouteInfos[nowReachedInfo.prevRouteId].routeName,
+                type: getBusType(
+                  busRouteInfos[nowReachedInfo.prevRouteId].routeName
+                ),
                 busLocalBlID: nowReachedInfo.prevRouteId,
                 departureTime: nowReachedInfo.arrTime,
               },
@@ -586,8 +565,9 @@ const mkPaths = ({
             lane: [
               {
                 name: nowReachedInfo.prevRouteId.slice(0, -2), // (-1, -2 제거)
-                subwayCode:
-                  subwayCodeDict[nowReachedInfo.prevRouteId.slice(0, -2)],
+                subwayCode: getTrainCode(
+                  nowReachedInfo.prevRouteId.slice(0, -2)
+                ),
                 departureTime: nowReachedInfo.arrTIme,
               },
             ],
@@ -1198,6 +1178,79 @@ const checkIsBusStation = (id) => {
   if (parseInt(id) >= 100000000) return true;
 
   return false;
+};
+
+// *** 버스 노선 코드 리턴해주는 함수
+const getBusType = (busNo) => {
+  // TODO: 노선 추가된 이후 알고리즘 재검토
+  const busCodeDict = {
+    일반: 1,
+    좌석: 2,
+    마을버스: 3,
+    직행좌석: 4,
+    공항버스: 5,
+    간선급행: 6,
+    외곽: 10,
+    간선: 11,
+    지선: 12,
+    순환: 13,
+    광역: 14,
+    급행: 15,
+    관광버스: 16,
+    농어촌버스: 20,
+    "경기도 시외형버스": 22,
+    급행간선: 26,
+  };
+
+  // const airportBusList = ["6000", "6001", "6002", "6003", "6004", "6005", "6006", "6008", "6009", "6010", "6011", "6012", "6013", "6014", "6015", "6016", "6017", "6018", "6020", "6030", "6100", "6101", "6200", "6300", "6701", "6702", "6703", "6704", "6705", "6706", "6707A"];
+
+  if (isNaN(busNo.slice(1, -1))) {
+    // 1. 이름 양끝을 제거해도 문자 포함된 경우 -> 마을버스
+    return busCodeDict["마을버스"];
+  } else if (busNo.length === 5 && busNo[0] === "N") {
+    return busCodeDict["공항버스"];
+  } else if ((busNo.length === 4 && busNo[0] === "9") || busNo[0] === "M") {
+    // M버스도 여기 포함
+    return busCodeDict["광역"];
+  } else if (busNo.length === 4) {
+    return busCodeDict["지선"];
+  } else if (busNo.length === 3) {
+    // 심야버스(N--)도 여기 포함
+    return busCodeDict["간선"];
+  } else if (busNo.length === 2) {
+    return busCodeDict["순환"];
+  }
+
+  return busCodeDict["일반"];
+};
+
+const getTrainCode = (trainRouteName) => {
+  const trainCodeDict = {
+    "수도권 1호선": 1,
+    "수도권 2호선": 2,
+    "수도권 3호선": 3,
+    "수도권 4호선": 4,
+    "수도권 5호선": 5,
+    "수도권 6호선": 6,
+    "수도권 7호선": 7,
+    "수도권 8호선": 8,
+    "수도권 9호선": 9,
+    공항철도: 101,
+    자기부상철도: 102,
+    경의중앙선: 104,
+    에버라인: 107,
+    경춘선: 108,
+    신분당선: 109,
+    의정부경전철: 110,
+    경강선: 112,
+    우이신설선: 113,
+    서해선: 114,
+    김포골드라인: 115,
+    수인분당선: 116,
+    신림선: 117,
+  };
+
+  return trainCodeDict[trainRouteName];
 };
 
 // *** arrTIme에 맞는 trip 정보 가져오는 함수
