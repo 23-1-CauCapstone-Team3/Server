@@ -42,6 +42,7 @@ const findTaxiPath = async (req, res) => {
       maxWalkTimePerStep: maxWalkingPerEachStep = DEFAULT_MAX_WALKING_PER_STEP,
     } = req.query;
 
+    let isIncludeTaxi = false; // 길찾기에 택시가 포함되어야 하는지 여부를 저장하는 flag 변수
     startDate = new Date(startDate);
 
     // 1. 길찾기에 쓰이는 데이터 구축
@@ -108,12 +109,13 @@ const findTaxiPath = async (req, res) => {
 
     // 도보만으로는 이동 불가 case -> 끝부분 택시 이동
     if (paths.length === 0) {
+      isIncludeTaxi = true;
       console.log("마지막역 -> 도착지 택시 필요");
 
       const endTaxiMarkedStations = getFinalInfo({
         endGeohash: geohash.encode(endLat, endLng),
         stationsByGeohash,
-        radius: getDistFromTaxiCost({ cost: maxCost, arrTime: 24 * 60 }), // TODO: arrTime 세밀하게 조정
+        radius: getDistFromTaxiCost({ cost: maxCost, arrTime: 20 * 60 }), // 일단은 arrTIme 널널하게 가져오기
         walkingRadius: maxWalkingPerEachStep * walkingUnit,
         walkingUnit,
         taxiUnit,
@@ -214,17 +216,18 @@ const findTaxiPath = async (req, res) => {
       // *** alg setting
       maxCost,
       maxWalking,
+      isIncludeTaxi,
     });
 
-    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    selectedPaths = await addRealtimeInfos({
-      startDate,
-      paths: [selectedPaths[0]],
-    });
+    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    // selectedPaths = await addRealtimeInfos({
+    //   startDate,
+    //   paths: [selectedPaths[0]],
+    // });
 
     res.send({
       pathExistence: true,
-      pathInfo: selectedPaths[0],
+      pathInfo: selectedPaths,
     });
   } catch (err) {
     console.log(err);
@@ -623,17 +626,12 @@ const mkPaths = ({
       }
 
       // 첫역 -> 출발지 정보 추가
-      let dist = haversine(
-        {
-          latitude: startLat,
-          longitude: startLng,
-        },
-        {
-          latitude: stationInfos[station].lng,
-          longitude: stationInfos[station].lat,
-        },
-        { unit: "meter" }
-      );
+      let dist = calcDist({
+        startLat,
+        startLng,
+        endLat: stationInfos[station].lat,
+        endLng: stationInfos[station].lng,
+      });
       nowPath.subPath.unshift({
         departureTime: startTime,
         arrivalTime: nowReachedInfo.arrTime,
@@ -669,17 +667,12 @@ const mkPaths = ({
       }
 
       // 도착지 -> 마지막역 정보 추가
-      dist = haversine(
-        {
-          latitude: stationInfos[endStation].lat,
-          longitude: stationInfos[endStation].lng,
-        },
-        {
-          latitude: endLat,
-          longitude: endLng,
-        },
-        { unit: "meter" }
-      );
+      dist = calcDist({
+        startLat: stationInfos[endStation].lat,
+        startLng: stationInfos[endStation].lng,
+        endLat,
+        endLng,
+      });
       sectionTime = getTimeFromDist({
         dist,
         walkingUnit,
@@ -750,11 +743,9 @@ const selectAndSortPaths = ({
   // *** alg setting
   maxCost,
   maxWalking,
+  isIncludeTaxi,
 }) => {
   let newPaths = [];
-
-  // TODO: 중복 노선 제거 (출발 -> 끝 역만 미세하게 다르고 동일 노선 타는 수많은 case들)
-  // TODO: sort
 
   // 1. 지났던 역 또 지나는 경로 추려내기 -> 필요 X, 기존 알고리즘에서 이미 처리하는 부분
   for (let i = 0; i < paths.length; i++) {
@@ -844,6 +835,26 @@ const selectAndSortPaths = ({
       newPaths.push(paths[i]);
     }
   }
+
+  // TODO: 중복 노선 제거 (출발 -> 끝 역만 미세하게 다르고 동일 노선 타는 수많은 case들)
+
+  // 3. 최대 도보 넘는 거 제거
+  paths = paths.filter((path) => {
+    return path.info.totalWalkTime <= maxWalking;
+  });
+
+  // 4. 정렬
+  paths.sort((el1, el2) => {
+    // 1. (isIncludeTaxi = true인 경우) 택시비 최소
+    if (isIncludeTaxi && el1.info.taxiPayment != el2.info.taxiPayment)
+      return el1.info.taxiPayment - el2.info.taxiPayment;
+
+    // 2. 빠른 도착시간
+    return (
+      getTimeFromDate(new Date(el1.info.arrivalTime)) -
+      getTimeFromDate(new Date(el2.info.arrivalTime))
+    );
+  });
 
   return paths;
 };
@@ -1684,21 +1695,17 @@ const getCircleGeohash = ({
 
   const geohashes = {};
   // ** geohashes
+  // TODO: geohash가 아닌 그냥 역 기준으로 끊기... 시간차이 많이 나는지 보기
   // { geohash: walkingTime or taxiTime }
 
   exploreCircle = (hash) => {
     const neighborPoint = geohash.decode(hash);
-    const distance = haversine(
-      {
-        latitude: centerPoint.latitude,
-        longitude: centerPoint.longitude,
-      },
-      {
-        latitude: neighborPoint.latitude,
-        longitude: neighborPoint.longitude,
-      },
-      { unit: "meter" }
-    );
+    const distance = calcDist({
+      startLat: centerPoint.latitude,
+      startLng: centerPoint.longitude,
+      endLat: neighborPoint.latitude,
+      endLng: neighborPoint.longitude,
+    });
 
     if (distance > radius) return;
 
@@ -1753,6 +1760,24 @@ const findNeighbors = (hash) => {
   return neighbors;
 };
 
+const calcDist = ({ startLat, startLng, endLat, endLng }) => {
+  const root2 = 1.41421356; // 직선 거리 값을 보정하기 위한 택시 및 도보 가중치
+
+  return (
+    haversine(
+      {
+        latitude: startLat,
+        longitude: startLng,
+      },
+      {
+        latitude: endLat,
+        longitude: endLng,
+      },
+      { unit: "meter" }
+    ) * root2
+  );
+};
+
 // *** 거리 <-> 시간 관련 함수
 const getTimeFromDist = ({ dist, walkingUnit, taxiUnit, isWalking = true }) => {
   let time;
@@ -1780,7 +1805,6 @@ const getDistFromTaxiCost = ({ cost, arrTime }) => {
 };
 
 const getTaxiCostFromDist = ({ dist, arrTime }) => {
-  // TODO: 택시비 알고리즘 개선
   const extraPercentage = calcExtraTaxiCostPercentage(arrTime);
 
   if (dist <= 1600) {
