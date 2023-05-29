@@ -910,7 +910,7 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
           // .filter((el) => el.geometry.type === "LineString"),
           distance: response.features[0].properties.totalDistance,
           sectionTime: Math.round(
-            response.features[0].properties.totalTime / 10
+            response.features[0].properties.totalTime / 60
           ),
         };
       } catch (err) {
@@ -955,7 +955,7 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
           }),
           distance: response.features[0].properties.totalDistance,
           sectionTime: Math.round(
-            response.features[0].properties.totalTime / 10
+            response.features[0].properties.totalTime / 60
           ),
           taxiPayment: response.features[0].properties.taxiFare,
         };
