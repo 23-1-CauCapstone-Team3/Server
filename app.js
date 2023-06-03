@@ -1,5 +1,6 @@
 const express = require("express");
 const app = express();
+const { pathRouter } = require('./routes/pathRouter');
 const { taxiPathRouter } = require("./routes/taxiPathRouter");
 const port = 3000;
 
@@ -10,6 +11,7 @@ const server = async () => {
     app.use(express.json());
     app.use(express.urlencoded({ extended: true }));
 
+    app.use("/route", pathRouter);
     app.use("/taxiRoute", taxiPathRouter);
 
     app.listen(port, () => {
