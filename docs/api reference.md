@@ -30,9 +30,9 @@
 
 ```
 {
+    pathExistance: boolean,
     departureTime: 출발 시간,
     arrivalTime: 도착 시간,
-    pathExistance: boolean,
     pathInfo: {
         info: {
             departureTime: 출발 시간,

@@ -219,15 +219,17 @@ const findTaxiPath = async (req, res) => {
       isIncludeTaxi,
     });
 
-    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    // selectedPaths = await addRealtimeInfos({
-    //   startDate,
-    //   paths: [selectedPaths[0]],
-    // });
+    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    selectedPaths = await addRealtimeInfos({
+      startDate,
+      paths: [selectedPaths[0]],
+    });
 
     res.send({
       pathExistence: true,
-      pathInfo: selectedPaths,
+      departureTime: selectedPaths[0].info.departureTime,
+      arrivalTime: selectedPaths[0].info.arrivalTime,
+      pathInfo: selectedPaths[0],
     });
   } catch (err) {
     console.log(err);
@@ -1012,6 +1014,12 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
     newPath.subPath.push(newSubPath);
   }
 
+  newPath.info.departureTime = getDateStrFromTime({
+    time: newPath.info.departureTime,
+    date: startDate,
+  });
+  newPath.info.arrivalTime = arrivalTime;
+
   return newPath;
 };
 
@@ -1027,20 +1035,25 @@ const updateTime = ({
   let newArrivalTime = newDepartureTime + sectionTime;
   diff += newArrivalTime - arrivalTime;
 
-  newDepartureTime = getDateFromTime({
+  newDepartureTime = getDateStrFromTime({
     time: newDepartureTime,
     date: startDate,
-  })
-    .toISOString()
-    .slice(0, -5);
-  newArrivalTime = getDateFromTime({
+  });
+  newArrivalTime = getDateStrFromTime({
     time: newArrivalTime,
     date: startDate,
+  });
+
+  return { departureTime: newDepartureTime, arrivalTime: newArrivalTime, diff };
+};
+
+const getDateStrFromTime = ({ time, date }) => {
+  return getDateFromTime({
+    time,
+    date,
   })
     .toISOString()
     .slice(0, -5);
-
-  return { departureTime: newDepartureTime, arrivalTime: newArrivalTime, diff };
 };
 
 // *** date, time 관련 함수들
@@ -1220,16 +1233,16 @@ const getEnableRoutesFromDB = async ({ busWeek, trainWeek }) => {
 
     const sql_train_trip = `
       SELECT *
-      FROM train_timetable
+      FROM train_time
       WHERE week ${trainWeek == 1 ? " = 1" : " >= 2"}
     `;
     const sql_bus_trip = `
       SELECT *
-      FROM bus_timetable
+      FROM bus_last_time
     `;
     const sql_bus_term = `
       SELECT route_id, route_name, ${busWeek} as term
-      FROM bus_route
+      FROM bus_term
     `;
 
     const [train_trip, bus_trip, bus_term] = await Promise.all([
