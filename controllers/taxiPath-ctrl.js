@@ -1,4 +1,3 @@
-const dayjs = require("dayjs");
 const mysql = require("../mysql/mysql");
 const axios = require("axios");
 const qs = require("qs");
@@ -34,7 +33,7 @@ const findTaxiPath = async (req, res) => {
       startY: startLat,
       endX: endLng,
       endY: endLat,
-      time: startDate = dayjs(),
+      time: startDate = new Date(),
       walkSpeed: walkingUnit = DEFAULT_WALKING_UNIT,
       taxiSpeed: taxiUnit = DEFAULT_TAXI_UNIT,
       maxTransfer = DEFAULT_MAX_TRANSFER,
@@ -44,10 +43,11 @@ const findTaxiPath = async (req, res) => {
     } = req.query;
 
     let isIncludeTaxi = false; // 길찾기에 택시가 포함되어야 하는지 여부를 저장하는 flag 변수
-    startDate = dayjs(startDate + ".000Z");
+    startDate = new Date(startDate);
 
     // 1. 길찾기에 쓰이는 데이터 구축
     const {
+      startTime,
       stationsByGeohash,
       stationInfos,
       routesByStation,
@@ -58,7 +58,7 @@ const findTaxiPath = async (req, res) => {
     // 2. raptor 알고리즘에 필요한 시작/끝역 초기 데이터 구축
     const { markedStations, initReachedInfo } = getInitInfos({
       startGeohash: geohash.encode(startLat, startLng),
-      startDate,
+      startTime,
       stationsByGeohash,
       radius: maxWalkingPerEachStep * walkingUnit,
       walkingUnit,
@@ -90,7 +90,7 @@ const findTaxiPath = async (req, res) => {
     // 4. raptor 결과 -> 경로
     let paths = mkPaths({
       // *** 경로 만들 데이터
-      startDate,
+      startTime,
       reachedInfos,
       transferNum,
       endMarkedStations,
@@ -126,7 +126,7 @@ const findTaxiPath = async (req, res) => {
         stationsByGeohash,
         radius: getDistFromTaxiCost({
           cost: maxCost,
-          arrTime: dayjs(startDate).hour(24),
+          arrTime: 24 * 60,
         }), // TODO: 일단은 arrTIme 널널하게 가져오기 -> 수정 필요
         walkingRadius: maxWalkingPerEachStep * walkingUnit,
         walkingUnit,
@@ -137,7 +137,7 @@ const findTaxiPath = async (req, res) => {
       // 기존 길찾기 결과에서, 마지막 경로가 taxi 이동 허용하는 것 선택
       paths = mkPaths({
         // *** 경로 만들 데이터
-        startDate,
+        startTime,
         reachedInfos,
         transferNum,
         endMarkedStations: endTaxiMarkedStations,
@@ -174,7 +174,7 @@ const findTaxiPath = async (req, res) => {
         initReachedInfo: taxiInitReachedInfo,
       } = getInitInfos({
         startGeohash: geohash.encode(startLat, startLng),
-        startDate,
+        startTime,
         stationsByGeohash,
         radius: getDistFromTaxiCost({
           cost: maxCost,
@@ -205,7 +205,7 @@ const findTaxiPath = async (req, res) => {
       // 기존 길찾기 결과에서, 마지막 경로가 taxi 이동 허용하는 것 선택
       paths = mkPaths({
         // *** 경로 만들 데이터
-        startDate,
+        startTime,
         reachedInfos,
         transferNum,
         endMarkedStations,
@@ -279,6 +279,7 @@ const init = async ({ startDate }) => {
   ]);
 
   return {
+    startTime: getTimeFromDate(startDate),
     stationsByGeohash,
     stationInfos,
     routesByStation,
@@ -393,7 +394,7 @@ const raptorAlg = ({
         if (trip[i].stationId === prevId) continue; // 중복역 pass
         prevId = trip[i].stationId;
 
-        let minArrTime = startArrTime.add(100, "d"); // 초기 최소 시간은 아주 크게 설정
+        let minArrTime = 100 * 60; // 초기 최소 시간은 아주 크게 설정
 
         // (저번 for문 iteration들에서) 가장 빠르게 해당 역에 도달한 기록이 있는 경우,
         // 그 시간을 minArrTime에 저장
@@ -401,7 +402,7 @@ const raptorAlg = ({
           trip[i].stationId in fastestReachedIndsByStation &&
           reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
             trip[i].stationId
-          ].arrTime.isBefore(minArrTime)
+          ].arrTime < minArrTime
         ) {
           minArrTime =
             reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
@@ -414,15 +415,13 @@ const raptorAlg = ({
         if (
           transferNum != fastestReachedIndsByStation[trip[i].stationId] &&
           trip[i].stationId in reachedInfos[transferNum] &&
-          reachedInfos[transferNum][trip[i].stationId].arrTime.isBefore(
-            minArrTime
-          )
+          reachedInfos[transferNum][trip[i].stationId].arrTime < minArrTime
         ) {
           minArrTime = reachedInfos[transferNum][trip[i].stationId].arrTime;
         }
 
         // 이전까지의 min time들보다 가장 빠르게 도달한 경우, update
-        if (trip[i].arrTime.isBefore(minArrTime)) {
+        if (trip[i].arrTime < minArrTime) {
           reachedInfos[transferNum][trip[i].stationId] = {
             arrTime: trip[i].arrTime,
             walkingTime:
@@ -444,9 +443,8 @@ const raptorAlg = ({
         if (
           transferNum > 0 &&
           trip[i].stationId in reachedInfos[transferNum - 1] &&
-          reachedInfos[transferNum - 1][trip[i].stationId].arrTime.isBefore(
+          reachedInfos[transferNum - 1][trip[i].stationId].arrTime <
             trip[i].arrTime
-          )
         ) {
           trip = getNowTrip({
             route,
@@ -486,7 +484,7 @@ const raptorAlg = ({
 // *** raptor 결과 -> 경로
 const mkPaths = ({
   // *** 경로 만들 데이터
-  startDate,
+  startTime,
   reachedInfos,
   transferNum,
   endMarkedStations,
@@ -577,7 +575,7 @@ const mkPaths = ({
         });
 
         const passStopList = { stations: [] };
-        const term = trip[0].arrTime.diff(startDate, "m"); // 추후 departureTime = 직전 arrTime + term 으로 계산할 예정
+        const term = trip[0].arrTime - startTime; // 추후 departureTime = 직전 arrTime + term 으로 계산할 예정
 
         let stationOrder = 0; // 역의 순서
         let prevStationId = null;
@@ -611,10 +609,7 @@ const mkPaths = ({
           // 버스
           nowPath.subPath.unshift({
             trafficType: BUS_CODE,
-            sectionTime: nowReachedInfo.arrTime.diff(
-              prevReachedInfo.arrTime,
-              "m"
-            ),
+            sectionTime: nowReachedInfo.arrTime - prevReachedInfo.arrTime,
             stationCount: stationOrder - 1,
             lane: [
               {
@@ -623,7 +618,7 @@ const mkPaths = ({
                   busRouteInfos[nowReachedInfo.prevRouteId].routeName
                 ),
                 busLocalBlID: nowReachedInfo.prevRouteId,
-                departureTime: prevReachedInfo.arrTime.add(term, "m"),
+                departureTime: prevReachedInfo.arrTime + term,
                 arrivalTime: nowReachedInfo.arrTime,
               },
             ],
@@ -642,17 +637,14 @@ const mkPaths = ({
           nowPath.subPath.unshift({
             trafficType: TRAIN_CODE,
             stationCount: stationOrder - 1,
-            sectionTime: nowReachedInfo.arrTime.diff(
-              prevReachedInfo.arrTime,
-              "m"
-            ),
+            sectionTime: nowReachedInfo.arrTime - prevReachedInfo.arrTime,
             lane: [
               {
                 name: nowReachedInfo.prevRouteId.slice(0, -2), // (-1, -2 제거)
                 subwayCode: getTrainCode(
                   nowReachedInfo.prevRouteId.slice(0, -2)
                 ),
-                departureTime: prevReachedInfo.arrTime.add(term, "m"),
+                departureTime: prevReachedInfo.arrTime + term,
                 arrivalTime: nowReachedInfo.arrTime,
               },
             ],
@@ -682,7 +674,7 @@ const mkPaths = ({
         endLng: stationInfos[station].lng,
       });
       nowPath.subPath.unshift({
-        departureTime: startDate,
+        departureTime: startTime,
         arrivalTime: nowReachedInfo.arrTime,
         startX: startLng,
         startY: startLat,
@@ -732,7 +724,7 @@ const mkPaths = ({
       nowPath.subPath.push({
         sectionTime,
         departureTime: lastReachedInfo.arrTime,
-        arrivalTime: lastReachedInfo.arrTime.add(sectionTime, "m"),
+        arrivalTime: lastReachedInfo.arrTime + sectionTime,
         ...nowPath.subPath[i + 1],
         startX: stationInfos[endStation].lng,
         startY: stationInfos[endStation].lat,
@@ -770,12 +762,12 @@ const mkPaths = ({
       // 첫 역 정보를 알아야지만 계산 가능한 정보 추가
       nowPath.info = {
         ...nowPath.info, // TODO: 대중교통 비용 추가
-        departureTime: startDate,
+        departureTime: startTime,
         arrivalTime: nowPath.subPath[i + 1].arrivalTime,
         transferCount: i,
         firstStartStation: stationInfos[station].stationName,
         lastEndStation: stationInfos[endStation].stationName,
-        totalTime: nowPath.subPath[i + 1].arrivalTime.diff(startDate, "m"),
+        totalTime: nowPath.subPath[i + 1].arrivalTime - startTime,
       };
 
       // path 정보 추가
@@ -1049,7 +1041,7 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
         (station) => {
           return {
             ...station,
-            arrivalTime: station.arrivalTime.add(diff, "m"),
+            arrivalTime: station.arrivalTime + diff,
           };
         }
       );
@@ -1058,24 +1050,46 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
     return newSubPath;
   });
 
-  newPath.info.departureTime = newPath.info.departureTime.format(
-    "YYYY-MM-DDTHH:mm:ss"
-  );
+  newPath.info.departureTime = getDateStrFromTime({
+    time: newPath.info.departureTime,
+    date: startDate,
+  });
   newPath.info.arrivalTime = arrivalTime;
 
   return newPath;
 };
 
 // *** departureTime, arrivalTime을 update해주는 함수
-const updateTime = ({ departureTime, arrivalTime, diff, sectionTime }) => {
-  let newDepartureTime = departureTime.add(diff, "m");
-  let newArrivalTime = newDepartureTime.add(sectionTime, "m");
-  diff += newArrivalTime.diff(arrivalTime, "m");
+const updateTime = ({
+  departureTime,
+  arrivalTime,
+  diff,
+  sectionTime,
+  startDate,
+}) => {
+  let newDepartureTime = departureTime + diff;
+  let newArrivalTime = newDepartureTime + sectionTime;
+  diff += newArrivalTime - arrivalTime; // 즉, 실제 지연되는 시간 (더해줘야 함)
 
-  newDepartureTime = newDepartureTime.format("YYYY-MM-DDTHH:mm:ss");
-  newArrivalTime = newArrivalTime.format("YYYY-MM-DDTHH:mm:ss");
+  newDepartureTime = getDateStrFromTime({
+    time: newDepartureTime,
+    date: startDate,
+  });
+  newArrivalTime = getDateStrFromTime({
+    time: newArrivalTime,
+    date: startDate,
+  });
 
   return { departureTime: newDepartureTime, arrivalTime: newArrivalTime, diff };
+};
+
+const getDateStrFromTime = ({ time, date }) => {
+  return getDateFromTime({
+    time,
+    date,
+  })
+    .toISOString()
+    .slice(0, -5);
 };
 
 // *** date, time 관련 함수들
@@ -1096,8 +1110,8 @@ const checkIsHoliday = (date) => {
   const lunarHoliday = new Set(["0527", "0928", "0929", "0930"]);
 
   if (
-    date.format("MMDD") in solarHoliday ||
-    date.format("MMDD") in lunarHoliday
+    getDateStringToDate(date) in solarHoliday ||
+    getDateStringToDate(date) in lunarHoliday
   ) {
     isHoliday = true;
   }
@@ -1105,9 +1119,18 @@ const checkIsHoliday = (date) => {
   return isHoliday;
 };
 
+const getDateStringToDate = (date) => {
+  return (
+    (date.getMonth() + 1 < 9
+      ? "0" + (date.getMonth() + 1)
+      : date.getMonth() + 1) +
+    (date.getDate() < 9 ? "0" + date.getDate() : date.getDate())
+  );
+};
+
 const getWeekFromDate = (date) => {
-  let week = date.day();
-  if (date.hour() < 10) {
+  let week = date.getDay();
+  if (date.getHours() < 10) {
     // 10시 미만이면, 이전 날로 취급
     week -= 1;
 
@@ -1158,6 +1181,15 @@ const getTimeFromDate = (date) => {
   }
 
   return time;
+};
+
+const getDateFromTime = ({ time, date }) => {
+  const startTime = getTimeFromDate(date);
+
+  if (time > 24 * 60) time -= 24 * 60;
+
+  date.setHours(Math.floor(time / 60), time % 60);
+  return date;
 };
 
 // *** DB에서 데이터 불러오는 함수들
@@ -1295,9 +1327,7 @@ const getEnableRoutesFromDB = async (startDate) => {
       tripsByTrainRoute[id][info.train_id].push({
         order: info.order,
         stationId: info.stat_id,
-        arrTime: startDate
-          .set("h", Math.floor(info.time / 100))
-          .set("m", info.time % 100),
+        arrTime: info.time,
       });
     }
 
@@ -1321,9 +1351,7 @@ const getEnableRoutesFromDB = async (startDate) => {
       tripsByBusRoute[info.route_id].push({
         order: info.order,
         stationId: info.stat_id,
-        arrTime: startDate
-          .set("h", Math.floor(info.time / 100))
-          .set("m", info.time % 100),
+        arrTime: info.time,
       });
     }
     for (const route in tripsByBusRoute) {
@@ -1456,7 +1484,7 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime }) => {
     if (startStationInd === -1) return null;
 
     // 1. 막차 시간 - 탑승 가능 시간 계산
-    let diff = trip[startStationInd].arrTime.diff(arrTime, "m");
+    let diff = trip[startStationInd].arrTime - arrTime;
 
     // 막차 시간을 이미 지났으면 탑승 불가
     if (diff < 0) return null;
@@ -1468,7 +1496,7 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime }) => {
     // 이때, 배차 간격을 기다릴 필요 없음
     let newTrip = trip.map((el) => {
       return {
-        arrTime: el.arrTime.add(-diff, "m"),
+        arrTime: el.arrTime - diff,
         stationId: el.stationId,
         order: el.order,
       };
@@ -1491,8 +1519,8 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime }) => {
 
       // 내가 탑승 가능한 시간에서부터 얼마나 걸리는지
       if (
-        trip[trainId][startStationInd].arrTime.isBefore(minArrTime) &&
-        trip[trainId][startStationInd].arrTime.isAfter(arrTime)
+        trip[trainId][startStationInd].arrTime < minArrTime &&
+        trip[trainId][startStationInd].arrTime > arrTime
       ) {
         selectedTrainId = trainId;
         minArrTime = trip[trainId][startStationInd].arrTime;
@@ -1511,7 +1539,7 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime }) => {
 // *** 첫 위치에서 도보 이동 가능 역들 이동하는 함수
 const getInitInfos = ({
   startGeohash,
-  startDate,
+  startTime,
   stationsByGeohash,
   radius,
   walkingRadius, // isWalking = false에만 필요
@@ -1538,7 +1566,7 @@ const getInitInfos = ({
     markedStations = new Set([...markedStations, ...stationsByGeohash[hash]]);
 
     for (const station of stationsByGeohash[hash]) {
-      const arrTime = startDate.add(circleGeohash[hash], "m");
+      const arrTime = startTime + circleGeohash[hash];
 
       if (isWalking) {
         initReachedInfo[station] = {
@@ -1563,7 +1591,7 @@ const getInitInfos = ({
   if (!isWalking) {
     const beforeCheckedStations = getInitInfos({
       startGeohash,
-      startDate,
+      startTime,
       stationsByGeohash,
       radius: walkingRadius,
       walkingUnit,
@@ -1642,7 +1670,7 @@ const getNextInfos = ({
 
     if (
       !(hash in markedGeohashes) ||
-      reachedInfo[station].arrTime.isBefore(markedGeohashes[hash].arrTime)
+      reachedInfo[station].arrTime < markedGeohashes[hash].arrTime
     ) {
       markedGeohashes[hash] = {
         arrTime: reachedInfo[station].arrTime,
@@ -1667,9 +1695,8 @@ const getNextInfos = ({
       for (const station in stationsByGeohash[curHash]) {
         if (
           station === curHashInfo.stationId &&
-          reachedInfo[station].arrTime.isAfter(
-            markedGeohashes[curHash].arrTime.add(10, "m")
-          ) // TODO: 왜 10 더해주는지? -> 10이 아니어야 함...
+          reachedInfo[station].arrTime > markedGeohashes[curHash].arrTime + 10
+          // TODO: 왜 10 더해주는지? -> 10이 아니어야 함...
         ) {
           // 갱신
           reachedInfo[station] = {
@@ -1678,17 +1705,13 @@ const getNextInfos = ({
           };
         } else if (
           station !== curHashInfo.stationId &&
-          reachedInfo[station].arrTime.isAfter(
-            markedGeohashes[curHash].arrTime.add(geohashes[curHash], "m")
-          )
+          reachedInfo[station].arrTime >
+            markedGeohashes[curHash].arrTime + geohashes[curHash]
         ) {
           // 갱신
           reachedInfo[station] = {
             ...reachedInfo[station],
-            arrTime: markedGeohashes[curHash].arrTime.add(
-              geohashes[curHash],
-              "m"
-            ),
+            arrTime: markedGeohashes[curHash].arrTime + geohashes[curHash],
             walkingTime:
               markedGeohashes[curHash].walkingTime + geohashes[curHash],
             prevStationId: markedGeohashes[curHash].stationId,
@@ -1840,10 +1863,12 @@ const getTaxiCostFromDist = ({ dist, arrTime }) => {
 
 const calcExtraTaxiCostPercentage = (arrTime) => {
   // 할증 계산
-  const hour = arrTime.hour();
-
-  if ((hour >= 22 && hour < 23) || (hour >= 26 && hour < 28)) return 1.2;
-  else if (hour >= 23 * 60 && hour < 26 * 60) return 1.4;
+  if (
+    (arrTime >= 22 * 60 && arrTime < 23 * 60) ||
+    (arrTime >= 26 * 60 && arrTime < 28 * 60)
+  )
+    return 1.2;
+  else if (arrTime >= 23 * 60 && arrTime < 26 * 60) return 1.4;
 
   return 1;
 };
