@@ -542,10 +542,6 @@ async function getRailTimes(userTime, totalInfo, dayCode, transport_base_date) {
         const temp = stationTimeList.map((element) =>{
             return {'stat_id': element.stat_id, 'train_id': element.train_id, 'time': dayjs(transportYYYYMMDD+String(element.time, 'YYYYMMDDhhmm'))}
           })
-          .filter((element)=>{ 
-            if(element.time.isAfter(userTime)) {return true} 
-            else {return false} 
-          })
 
         // 검색되는 것이 없다면 null 반환
         if(temp.length <= 0){
@@ -628,16 +624,6 @@ async function getBusData(userTime, totalInfo, dayType, transport_base_date){
           return {stat_id: element.stat_id, route_id: element.route_id, time: null}
         }
         return {stat_id: element.stat_id, route_id: element.route_id, time: dayjs(transport_base_date.format('YYYY-MM-DD')+element.time,'YYYY-MM-DDHHmmss')}
-      })
-      .map((element)=>{
-        if(element.time === null){
-          return element
-        }
-        if(userTime.isBefore(element.time)){
-          return element
-        } else {
-          return {stat_id: element.stat_id, route_id: element.route_id, time: null}
-        }
       })
 
       const final_term_result = {}
