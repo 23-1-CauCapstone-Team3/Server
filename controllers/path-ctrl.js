@@ -211,80 +211,96 @@ const findPath = async(req, res) => {
 
           } else {
             console.log('지하철'+path[i].sectionTime)
-
             const numberLine = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-            let rail_type= 0
-            if(path[i].lane[0].name.includes('급행') || path[i].lane[0].name.includes('특급')){
-              rail_type= 1
-            }
-
-            let DC = dayCode
-            if (dayCode === 3 && !numberLine.includes(path[i].lane[0].subwayCode)){
-              DC = 2
-            }
-            
-            const keyString = String(path[i].lane[0].subwayCode)+'-'+String(path[i].wayCode)+'-'+String(DC)+'-'
-            +String(rail_type)+'-'+String(path[i].startID)+'-'+String(path[i].endID)
-
-            console.log(keyString)
-
-            if (train_time[keyString] === undefined || train_time[keyString] === null) {
-              subLastPathTime = null
-              break
-            }
-              
-            const endStationRail = train_time[keyString][path[i].endID].filter((element) => { 
-              if(element.time < subLastPathTime) {
-                return true
-              } else {
-                return false
+            const lanesWithTime = path[i].lane.map((lane)=>{
+              let rail_type= 0
+              if(lane.name.includes('급행') || lane.name.includes('특급')){
+                rail_type= 1
               }
-            })
 
-            if(endStationRail.length === 0){
-              subLastPathTime = null
-              break
-            }
-              
-            const endStationLastRail = endStationRail.reduce((prev, now) => { 
-              if(prev.time > now.time) {
-                return prev
-              } else {
-                return now
+              let DC = dayCode
+              if (dayCode === 3 && !numberLine.includes(lane.subwayCode)){
+                DC = 2
               }
-            })
 
-            console.log('도착지'+endStationLastRail.time)
-
-            const startStationLastRail = train_time[keyString][path[i].startID].filter((element)=> {
+              const keyString = String(lane.subwayCode)+'-'+String(path[i].wayCode)+'-'+String(DC)+'-'
+              +String(rail_type)+'-'+String(path[i].startID)+'-'+String(path[i].endID)
               
-              if(element.train_id === endStationLastRail.train_id && element.time < endStationLastRail.time) {
-                return true
-              } else{
-                return false
+              console.log(keyString)
+
+              if (train_time[keyString] === undefined || train_time[keyString] === null) {
+                return null
               }
-            })
 
-            if(startStationLastRail.length === 0){
-              subLastPathTime = null
-              break
-            }
+              const endStationRail = train_time[keyString][path[i].endID].filter((element)=>{
 
-            startStationLastRail.map((e)=>{console.log(e.time)})
+                if (element.time < subLastPathTime){
+                  return true
+                } else {
+                  return false
+                }
+              })
+
+              if(endStationRail.length === 0){
+                console.log('도착역 길이 0')
+                return null
+              }
+
+              const endStationLastRail = endStationRail.reduce((prev, now)=>{
+                if(prev.time > now.time){
+                  return prev
+                } else { 
+                  return now
+                }
+              })
+
+              const startStationLastRail = train_time[keyString][path[i].startID].filter((element)=> {
+              
+                if(element.train_id === endStationLastRail.train_id && element.time < endStationLastRail.time) {
+                  return true
+                } else{
+                  return false
+                }
+              })
+
+              if(startStationLastRail.length === 0){
+                console.log('출발역 길이 0')
+                return null
+              }
+
+              startStationLastRail.map((e)=>{console.log(e.time)})
                   
-            const newLastPathTime = startStationLastRail.reduce((prev, now) => { 
-              if(prev.time > now.time) {
+              const newLastPathTime = startStationLastRail.reduce((prev, now) => { 
+                if(prev.time > now.time) {
+                  return prev
+                } else {
+                  return now
+                }
+              })
+              return {newLastPathTime:newLastPathTime, endStationLastRail:endStationLastRail}
+            })
+
+            const nonNullLanes = lanesWithTime.filter((element)=>element)
+
+            if(nonNullLanes.length === 0){
+              console.log( 'non 0')
+              subLastPathTime = null
+              break
+            }
+
+            const lastTrainTimeInfo = nonNullLanes.reduce((prev,now)=>{
+              if(prev.newLastPathTime.time >= now.newLastPathTime.time){
                 return prev
               } else {
                 return now
               }
             })
             
-            console.log('지하철 :'+newLastPathTime.time)
-            subLastPathTime = newLastPathTime.time
+            console.log('지하철 :'+lastTrainTimeInfo.newLastPathTime.time)
+            subLastPathTime = lastTrainTimeInfo.newLastPathTime.time
             path[i].lane[0].departureTime = getDateValue(transport_base_date, subLastPathTime)
-            path[i].lane[0].arrivalTime = getDateValue(transport_base_date, endStationLastRail.time)
+            path[i].lane[0].arrivalTime = getDateValue(transport_base_date, lastTrainTimeInfo.endStationLastRail.time)
               
           }
         }
