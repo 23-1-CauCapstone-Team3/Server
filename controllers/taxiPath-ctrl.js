@@ -126,8 +126,8 @@ const findTaxiPath = async (req, res) => {
         stationsByGeohash,
         radius: getDistFromTaxiCost({
           cost: maxCost,
-          arrTime: 24 * 60,
-        }), // TODO: 일단은 arrTIme 널널하게 가져오기 -> 수정 필요
+          arrTime: -1,
+        }),
         walkingRadius: maxWalkingPerEachStep * walkingUnit,
         walkingUnit,
         taxiUnit,
@@ -320,7 +320,6 @@ const raptorAlg = ({
     markedRoutes = {};
 
     // 2-a. 같은 노선에 대해 더 이른 역에서 탑승할 수 있는 경우, 그 역에서 타면 됨
-    // TODO: 급행 고려 필요 <- 급행 시간 잘 파악해보고, 늦은 시간에도 급행 다닌다면 고려해야 함
     for (const station of markedStations) {
       // TODO: routesByStation[station]에서 undefined 나오는 경우 존재 -> stationId == 118000006
       // -> 없는 노선 없도록, bus 정보 다 주면 그때 다시 제대로 join하기
@@ -778,7 +777,6 @@ const mkPaths = ({
   return paths;
 };
 
-// TODO: 각 경로 비교 알고리즘 구현
 const selectAndSortPaths = ({
   paths,
   // *** alg setting
@@ -1266,6 +1264,11 @@ const getEnableRoutesFromDB = async (startDate) => {
       FROM train_time
       WHERE week ${trainWeek == 1 ? " = 1" : " >= 2"}
     `;
+    const sql_train_route = `
+      SELECT *
+      FROM train_route 
+      WHERE week ${trainWeek == 1 ? " = 1" : " >= 2"}
+    `;
     const sql_bus_trip = `
       SELECT *
       FROM bus_last_time
@@ -1275,8 +1278,9 @@ const getEnableRoutesFromDB = async (startDate) => {
       FROM bus_term
     `;
 
-    const [train_trip, bus_trip, bus_term] = await Promise.all([
+    const [train_trip, train_route, bus_trip, bus_term] = await Promise.all([
       conn.query(sql_train_trip),
+      conn.query(sql_train_route),
       conn.query(sql_bus_trip),
       conn.query(sql_bus_term),
     ]);
@@ -1296,12 +1300,13 @@ const getEnableRoutesFromDB = async (startDate) => {
       "9호선",
     ]);
 
-    const routesByStation = {},
+    const trainRouteIdByTrainId = {},
+      routesByStation = {},
       tripsByTrainRoute = {},
       tripsByBusRoute = {},
       busRouteInfos = {};
 
-    for (const info of train_trip[0]) {
+    for (const info of train_route[0]) {
       if (info.route_name in routeIncludesWeek3 && info.week != trainWeek) {
         // 필요없는 정보
         continue;
@@ -1309,8 +1314,42 @@ const getEnableRoutesFromDB = async (startDate) => {
 
       const id = getTrainRouteId({
         routeName: info.route_name,
-        inout: info.inout,
+        inout: info.way,
+        startStationId: info.start_stat_id,
+        endStationId: info.end_stat_id,
+        isDirect: info.is_direct,
       });
+
+      // check해보기 => 중복 뜨는지
+      // 확인 결과, 없음
+      if (
+        info.route_name + "-" + info.way + "-" + info.train_id in
+        trainRouteIdByTrainId
+      ) {
+        console.log("중복 존재");
+        console.log(
+          trainRouteIdByTrainId[
+            info.route_name + "-" + info.way + "-" + info.train_id
+          ]
+        );
+        console.log(id);
+      }
+
+      trainRouteIdByTrainId[
+        info.route_name + "-" + info.way + "-" + info.train_id
+      ] = id;
+    }
+
+    for (const info of train_trip[0]) {
+      if (info.route_name in routeIncludesWeek3 && info.week != trainWeek) {
+        // 필요없는 정보
+        continue;
+      }
+
+      const id =
+        trainRouteIdByTrainId[
+          info.route_name + "-" + info.way + "-" + info.train_id
+        ];
 
       if (!(info.stat_id in routesByStation)) {
         routesByStation[info.stat_id] = new Set();
@@ -1382,9 +1421,25 @@ const getEnableRoutesFromDB = async (startDate) => {
   return result;
 };
 
-// *** tripsByRoute에 사용할, 지하철 노선 + inout으로 id 생성하는 함수
-const getTrainRouteId = ({ routeName, inout }) => {
-  return routeName + "-" + String(inout);
+// *** tripsByRoute에 사용할, 지하철 노선 + inout + 첫열차 끝열차 + 급행여부 로 id 생성하는 함수
+const getTrainRouteId = ({
+  routeName,
+  inout,
+  startStationId,
+  endStationId,
+  isDirect,
+}) => {
+  return (
+    routeName +
+    "-" +
+    String(inout) +
+    "-" +
+    startStationId +
+    "-" +
+    endStationId +
+    "-" +
+    String(isDirect)
+  );
 };
 
 // *** 버스 정류장인지 지하철 정류장인지 확인하는 함수
@@ -1530,13 +1585,12 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime }) => {
     if (selectedTrainId === -1) return null;
 
     let newTrip = trip[selectedTrainId];
-    // TODO: 지하철 방향별 차 고려하도록 수정해야 함 -> 급행 또는 방향이 갈리는 몇몇 노선들에 대해
 
     return newTrip;
   }
 };
 
-// *** 첫 위치에서 도보 이동 가능 역들 이동하는 함수
+// *** 첫 위치에서 도보 이동 가능 (or 택시 이동 가능) 역들 이동하는 함수
 const getInitInfos = ({
   startGeohash,
   startTime,
