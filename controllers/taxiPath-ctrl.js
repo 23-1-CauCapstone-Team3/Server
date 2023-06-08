@@ -13,10 +13,10 @@ const DEFAULT_WALKING_UNIT = 50,
   DEFAULT_TAXI_UNIT = 400;
 
 // *** 기본 상수
-const DEFAULT_MAX_TRANSFER = 5;
+const DEFAULT_MAX_TRANSFER = 3;
 const DEFAULT_MAX_COST = 35000;
-const DEFAULT_MAX_WALKING = 45;
-const DEFAULT_MAX_WALKING_PER_STEP = 30;
+const DEFAULT_MAX_WALKING = 50;
+const DEFAULT_MAX_WALKING_PER_STEP = 40;
 const WALKING_ROUTE_ID = "walking";
 const TAXI_ROUTE_ID = "taxi";
 
@@ -118,7 +118,7 @@ const findTaxiPath = async (req, res) => {
       taxiUnit,
     });
 
-    // 5. paths들 추려내기
+    // // 5. paths들 추려내기
     paths = selectAndSortPaths({
       paths,
       // *** alg setting
@@ -259,17 +259,17 @@ const findTaxiPath = async (req, res) => {
       return;
     }
 
-    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    paths = await addRealtimeInfos({
-      startDate,
-      paths: [paths[0]],
-    });
+    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    // paths = await addRealtimeInfos({
+    //   startDate,
+    //   paths: [paths[0]],
+    // });
 
     res.send({
       pathExistence: true,
       departureTime: paths[0].info.departureTime,
       arrivalTime: paths[0].info.arrivalTime,
-      pathInfo: paths[0],
+      pathInfo: paths,
     });
   } catch (err) {
     console.log(err);
@@ -404,18 +404,18 @@ const raptorAlg = ({
       //     route
       //   );
 
-      // if (
-      //   !checkIsBusStation(startStation) &&
-      //   stationInfos[startStation].stationName === "상도"
-      // )
-      //   console.log(
-      //     trip,
-      //     transportNum,
-      //     stationInfos[startStation].stationName,
-      //     route,
-      //     startStationInd,
-      //     size
-      //   );
+      if (
+        !checkIsBusStation(startStation) &&
+        stationInfos[startStation].stationName === "상도"
+      )
+        console.log(
+          trip,
+          transportNum,
+          stationInfos[startStation].stationName,
+          route,
+          startStationInd,
+          size
+        );
 
       for (let i = startStationInd + 1; i < size; i++) {
         if (trip[i].stationId == prevId) continue; // 중복역 pass
@@ -435,19 +435,19 @@ const raptorAlg = ({
 
         let minArrTime = 100 * 60; // 초기 최소 시간은 아주 크게 설정
 
-        // // (저번 for문 iteration들에서) 가장 빠르게 해당 역에 도달한 기록이 있는 경우,
-        // // 그 시간을 minArrTime에 저장
-        // if (
-        //   trip[i].stationId in fastestReachedIndsByStation &&
-        //   reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
-        //     trip[i].stationId
-        //   ].arrTime < minArrTime
-        // ) {
-        //   minArrTime =
-        //     reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
-        //       trip[i].stationId
-        //     ].arrTime;
-        // }
+        // (저번 for문 iteration들에서) 가장 빠르게 해당 역에 도달한 기록이 있는 경우,
+        // 그 시간을 minArrTime에 저장
+        if (
+          trip[i].stationId in fastestReachedIndsByStation &&
+          reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
+            trip[i].stationId
+          ].arrTime < minArrTime
+        ) {
+          minArrTime =
+            reachedInfos[fastestReachedIndsByStation[trip[i].stationId]][
+              trip[i].stationId
+            ].arrTime;
+        }
 
         // 이번 iteration에서 이 역에 도달하여 기록된 arrTime이 있는 경우 (아직 최소 시간과 비교되지 않음),
         // 최소 도달 시간과 비교하여 그 시간을 minArrTime에 저장
@@ -480,7 +480,7 @@ const raptorAlg = ({
             prevIndex: startStationInd,
           };
 
-          // fastestReachedIndsByStation[trip[i].stationId] = transportNum;
+          fastestReachedIndsByStation[trip[i].stationId] = transportNum;
           markedStations.add(trip[i].stationId);
         }
 
@@ -521,6 +521,7 @@ const raptorAlg = ({
       radius: maxWalkingPerEachStep * walkingUnit,
       walkingUnit,
     }));
+
     reachedInfos[transportNum] = footReachedInfo;
 
     // 표시된 역 없는 경우 종료
@@ -928,11 +929,31 @@ const selectAndSortPaths = ({
   });
 
   // 2. 동일 노선 연속으로 또 타는 문제 해결
+  // + 도보/택시 -> 도보/택시 경로 추려내기
   paths = paths.filter((path) => {
-    let prevRouteType = null,
-      prevRouteName = null;
+    const notTransportType = new Set([
+      TAXI_CODE,
+      WALKING_CODE,
+      TRANSFER_WALKING_CODE,
+    ]);
+
+    let prevTransportRouteType = null,
+      prevTransportRouteName = null,
+      prevRouteType = null;
 
     for (const subPath of path.subPath) {
+      // 도보
+      if (
+        prevTransportRouteName !== null &&
+        notTransportType.has(prevRouteType) &&
+        notTransportType.has(subPath.trafficType)
+      ) {
+        return false;
+      }
+
+      prevRouteType = subPath.trafficType;
+
+      // 대중교통 관련된 조건 확인 code
       if (
         !(
           subPath.trafficType === BUS_CODE || subPath.trafficType === TRAIN_CODE
@@ -941,16 +962,17 @@ const selectAndSortPaths = ({
         continue;
 
       if (
-        prevRouteType === subPath.trafficType &&
-        prevRouteName === (subPath.trafficType === BUS_CODE)
+        prevTransportRouteName !== null &&
+        (prevTransportRouteType === subPath.trafficType &&
+        prevTransportRouteName == (subPath.trafficType === BUS_CODE)
           ? subPath.lane[0].busNo
-          : subPath.lane[0].name
+          : subPath.lane[0].name)
       ) {
         return false;
       }
 
-      prevRouteType = subPath.trafficType;
-      prevRouteName =
+      prevTransportRouteType = subPath.trafficType;
+      prevTransportRouteName =
         subPath.trafficType === BUS_CODE
           ? subPath.lane[0].busNo
           : subPath.lane[0].name;
@@ -977,7 +999,11 @@ const selectAndSortPaths = ({
       return path1.info.totalTime - path2.info.totalTime;
 
     // 3. 시간 동일한 경우, 환승 적은 것
-    return path1.info.transferCount - path2.info.transferCount;
+    if (path1.info.transferCount != path2.info.transferCount)
+      return path1.info.transferCount - path2.info.transferCount;
+
+    // 4. 환승 동일할 경우, 적은 도보
+    return path1.info.totalWalkTime - path2.info.totalWalkTime;
   });
 
   return paths;
