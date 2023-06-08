@@ -675,8 +675,8 @@ const mkPaths = ({
             index: stationOrder,
             stationName: stationInfos[trip[k].stationId].stationName,
             arrivalTime: trip[k].arrTime,
-            x: stationInfos[trip[k].stationId].lng,
-            y: stationInfos[trip[k].stationId].lat,
+            x: String(stationInfos[trip[k].stationId].lng),
+            y: String(stationInfos[trip[k].stationId].lat),
           });
 
           if (checkIsBusStation(trip[k].stationId)) {
