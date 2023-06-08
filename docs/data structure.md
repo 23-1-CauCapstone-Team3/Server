@@ -8,7 +8,7 @@
 
    ```
    {
-       geoHash: Set(stationId1, 2, ... )
+       geohash: Set(stationId1, 2, ... )
    }
    ```
 
@@ -24,7 +24,17 @@
    }
    ```
 
-3. routesByStation
+3. additionalTrainCostByStatIds
+
+   ```
+   {
+       startStationId: {
+           endStationId: cost
+       }
+   }
+   ```
+
+4. routesByStation
 
    ```
    {
@@ -33,7 +43,7 @@
    }
    ```
 
-4. tripsByRoute
+5. tripsByRoute
 
    ```
    {
@@ -44,7 +54,7 @@
                 arrTime
             }
         ],
-        routeName-inout: {
+        routeName-inout-startStationId-endStationId-isDirect: {
             trainId: [
                 {
                     order,
@@ -56,10 +66,14 @@
    }
    ```
 
-5. termByRoute
+6. busRouteInfos
+
    ```
     {
-       routeId: term
+        routeId: {
+            term,
+            routeName
+        }
     }
    ```
 
