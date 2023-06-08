@@ -37,7 +37,7 @@ const findPath = async(req, res) => {
     /**
      * 버스, 도보 여유 시간
      */
-    const bus_alpha = 2
+    const bus_alpha = 3
     const walk_alpha = 3
 
 
@@ -158,14 +158,14 @@ const findPath = async(req, res) => {
               if(path[i-1].trafficType !== 2 || path[i+1].trafficType !== 2){
                 path[i].sectionTime = 6
                 subLastPathTime = subLastPathTime - (path[i].sectionTime + walk_alpha)
-                console.log('텀: '+(path[i].sectionTime + walk_alpha))
+                console.log('대중교통 텀: '+(path[i].sectionTime + walk_alpha))
               } else {
                 subLastPathTime = subLastPathTime - (path[i].sectionTime+walk_alpha)
                 console.log('버스 사이 텀: '+(path[i].sectionTime+walk_alpha))
               }
             } else{
               subLastPathTime = subLastPathTime - (path[i].sectionTime+walk_alpha)
-              console.log('텀: '+(path[i].sectionTime+walk_alpha))
+              console.log('일반 도보 텀: '+(path[i].sectionTime+walk_alpha))
             }
           } else if(path[i].trafficType === 2) {
 
@@ -204,14 +204,25 @@ const findPath = async(req, res) => {
 
             console.log(getDateValue(transport_base_date, busLastTime).format('YYYY-MM-DDTHH:mm:ss'))
 
-            // 이전 막차 시간보다 이후인 경우는 (걸리는 시간 + 알파) 값을 빼주고 이전 막차시간보다 이전인 경우는 새로 막차시간을 설정 후 (걸리는 시간 + 알파) 값을 빼 줌 
-            if(busLastTime <= subLastPathTime) {
-              console.log('버스: '+busLastTime, path[i].sectionTime, bus_data.term)
-              subLastPathTime = busLastTime - (path[i].sectionTime + bus_data.term + bus_alpha)
-            } else {
-              console.log('이전 값: '+subLastPathTime, path[i].sectionTime, bus_data.term)
-              subLastPathTime = subLastPathTime - (path[i].sectionTime + bus_data.term + bus_alpha)
+            // 배차간격을 계속 빼서 가장 근접한 버스 출발 시간을 정함 최신 수정
+            
+            let busStartTime = busLastTime
+            const minimumStartTime = subLastPathTime - path[i].sectionTime
+            console.log("확인:"+ busLastTime, bus_data.term ,subLastPathTime, path[i].sectionTime, minimumStartTime)
+
+            while(minimumStartTime < busStartTime){
+              busStartTime -= bus_data.term
             }
+
+            subLastPathTime = busStartTime - bus_alpha
+
+            // if(busLastTime <= subLastPathTime) {
+            //   console.log('버스: '+busLastTime, path[i].sectionTime, bus_data.term)
+            //   subLastPathTime = busLastTime - (path[i].sectionTime + bus_data.term + bus_alpha)
+            // } else {
+            //   console.log('이전 값: '+subLastPathTime, path[i].sectionTime, bus_data.term)
+            //   subLastPathTime = subLastPathTime - (path[i].sectionTime + bus_data.term + bus_alpha)
+            // }
 
             // 마지막에 선택된 노선의 정보들을 저장해줌 
             path[i].busTerm = bus_data.term
@@ -386,7 +397,11 @@ const findPath = async(req, res) => {
 
         path.lane[0].departureTime = getDateValue(transport_base_date, arrivalTime).format('YYYY-MM-DDTHH:mm:ss')
         const term = bus_term_time[path.lane[0].busLocalBlID+'-'+path.startLocalStationID+'-'+path.endLocalStationID].term
-        arrivalTime = arrivalTime+ (path.sectionTime + term + bus_alpha)
+
+        // 배차간격과 알파값 안더함 최신 수정
+        arrivalTime = arrivalTime+ (path.sectionTime )
+
+        //arrivalTime = arrivalTime+ (path.sectionTime+term+ bus_alpha)
           
       } else {
 
