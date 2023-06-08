@@ -118,7 +118,7 @@ const findTaxiPath = async (req, res) => {
       taxiUnit,
     });
 
-    // // 5. paths들 추려내기
+    // 5. paths들 추려내기
     paths = selectAndSortPaths({
       paths,
       // *** alg setting
@@ -259,17 +259,19 @@ const findTaxiPath = async (req, res) => {
       return;
     }
 
-    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    // paths = await addRealtimeInfos({
-    //   startDate,
-    //   paths: [paths[0]],
-    // });
+    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    paths = await addRealtimeInfos({
+      startDate,
+      paths: [paths[0]],
+      additionalTrainCostByStatNames,
+      stationInfos,
+    });
 
     res.send({
       pathExistence: true,
       departureTime: paths[0].info.departureTime,
       arrivalTime: paths[0].info.arrivalTime,
-      pathInfo: paths,
+      pathInfo: paths[0],
     });
   } catch (err) {
     console.log(err);
@@ -452,7 +454,7 @@ const raptorAlg = ({
         // 이번 iteration에서 이 역에 도달하여 기록된 arrTime이 있는 경우 (아직 최소 시간과 비교되지 않음),
         // 최소 도달 시간과 비교하여 그 시간을 minArrTime에 저장
         if (
-          // transportNum != fastestReachedIndsByStation[trip[i].stationId] &&
+          transportNum != fastestReachedIndsByStation[trip[i].stationId] &&
           trip[i].stationId in reachedInfos[transportNum] &&
           reachedInfos[transportNum][trip[i].stationId].arrTime < minArrTime
         ) {
@@ -998,23 +1000,34 @@ const selectAndSortPaths = ({
     if (path1.info.totalTime != path2.info.totalTime)
       return path1.info.totalTime - path2.info.totalTime;
 
-    // 3. 시간 동일한 경우, 환승 적은 것
-    if (path1.info.transferCount != path2.info.transferCount)
-      return path1.info.transferCount - path2.info.transferCount;
+    // 3. 시간 동일한 경우, 적은 도보
+    if (path1.info.totalWalkTime != path2.info.totalWalkTime)
+      return path1.info.totalWalkTime - path2.info.totalWalkTime;
 
-    // 4. 환승 동일할 경우, 적은 도보
-    return path1.info.totalWalkTime - path2.info.totalWalkTime;
+    // 4. 도보 동일할 경우, 환승 적은 것
+    // if (path1.info.transferCount != path2.info.transferCount)
+    return path1.info.transferCount - path2.info.transferCount;
   });
 
   return paths;
 };
 
-const addRealtimeInfos = async ({ startDate, paths }) => {
+const addRealtimeInfos = async ({
+  startDate,
+  paths,
+  stationInfos,
+  additionalTrainCostByStatNames,
+}) => {
   try {
     paths = await Promise.all(
       paths.map((path) => {
         // 각 경로에 대해, realtime path 계산
-        return addEachRealtimeInfo({ startDate, path });
+        return addEachRealtimeInfo({
+          startDate,
+          path,
+          stationInfos,
+          additionalTrainCostByStatNames,
+        });
       })
     );
   } catch (err) {
@@ -1024,7 +1037,12 @@ const addRealtimeInfos = async ({ startDate, paths }) => {
   return paths;
 };
 
-const addEachRealtimeInfo = async ({ startDate, path }) => {
+const addEachRealtimeInfo = async ({
+  startDate,
+  path,
+  stationInfos,
+  additionalTrainCostByStatNames,
+}) => {
   const {
     SK_KEY,
     SK_WALKING_URL,
@@ -1187,6 +1205,15 @@ const addEachRealtimeInfo = async ({ startDate, path }) => {
   });
   newPath.info.arrivalTime = arrivalTime;
 
+  // 대중교통 비용 계산
+  const transportPayment = calcTransportCost({
+    path: newPath,
+    stationInfos,
+    additionalTrainCostByStatNames,
+  });
+  newPath.info.transportPayment = transportPayment;
+  newPath.info.payment += transportPayment;
+
   return newPath;
 };
 
@@ -1348,32 +1375,32 @@ const getEnableStationsFromDB = async () => {
       SELECT *
       FROM train_station
       `;
-    // const sql_train_cost = `
-    //   SELECT *
-    //   FROM train_cost
-    //   `;
+    const sql_train_cost = `
+      SELECT *
+      FROM train_cost
+      `;
     const sql_bus = `
       SELECT *
       FROM bus_station
       `;
 
-    const [train, bus] = await Promise.all([
+    const [train, train_cost, bus] = await Promise.all([
       conn.query(sql_train),
-      // conn.query(sql_train_cost),
+      conn.query(sql_train_cost),
       conn.query(sql_bus),
     ]);
 
     conn.release();
 
     // cost
-    // for (const info of train_cost[0]) {
-    //   if (!(info.start_stat_name in additionalTrainCostByStatNames)) {
-    //     additionalTrainCostByStatNames[info.start_stat_name] = {};
-    //   }
+    for (const info of train_cost[0]) {
+      if (!(info.start_stat_name in additionalTrainCostByStatNames)) {
+        additionalTrainCostByStatNames[info.start_stat_name] = {};
+      }
 
-    //   additionalTrainCostByStatNames[info.start_stat_name][info.end_stat_name] =
-    //     info.cost;
-    // }
+      additionalTrainCostByStatNames[info.start_stat_name][info.end_stat_name] =
+        info.cost;
+    }
 
     // geohash별로 station id 묶기
     for (const station of train[0]) {
@@ -2175,8 +2202,6 @@ const calcTransportCost = ({
   stationInfos,
   additionalTrainCostByStatNames,
 }) => {
-  const TRAIN_DEFAULT_COST = 1250;
-
   let cost = 0;
   let transferCnt = 0;
   let defaultCost,
@@ -2185,58 +2210,45 @@ const calcTransportCost = ({
     trainFlag = false;
 
   for (subPath of path.subPath) {
-    if (trainFlag && subPath.trafficType !== TRAIN_CODE) {
-      // 지하철 간의 환승은 다 끝남, 비용 계산하기
-      if (transferCnt % 5 === 0) {
-        // 기본 요금 지불 필요
-        defaultCost = TRAIN_DEFAULT_COST;
-        cost += defaultCost;
-      } else if (TRAIN_DEFAULT_COST > defaultCost) {
-        // 이전에 지불한 기본요금보다 비쌀 경우, 추가 비용 차감
-        cost += TRAIN_DEFAULT_COST - defaultCost;
-        defaultCost = TRAIN_DEFAULT_COST;
-      }
-
-      // 계산 -> 최단거리비례제도
-      // A -> B역으로 가는 최소 거리를 기준으로 비용 산출하게 됨
-      console.log(
-        "cost",
-        stationInfos[startStationId].stationName,
-        stationInfos[endStationId].stationName
-      );
-
-      let adder;
-      if (
-        additionalTrainCostByStatNames[
-          stationInfos[startStationId].stationName
-        ] === undefined
-      ) {
-        adder =
-          additionalTrainCostByStatNames[
-            stationInfos[endStationId].stationName
-          ][stationInfos[startStationId].stationName];
-      } else {
-        adder =
-          additionalTrainCostByStatNames[
-            stationInfos[startStationId].stationName
-          ][stationInfos[endStationId].stationName];
-      }
-      cost += adder - TRAIN_DEFAULT_COST;
-
-      trainFlag = false;
-    }
-
     if (subPath.trafficType === TRAIN_CODE) {
-      if (!trainFlag) startStationId = subPath.startStationID;
-      endStationId = subPath.endStationID;
+      if (!trainFlag) {
+        startStationId = subPath.startStationID;
+        endStationId = subPath.endStationID;
+      } else if (
+        stationInfos[endStationId].stationName ===
+        stationInfos[subPath.startStationID]
+      ) {
+        // 환승 가능
+        endStationId = subPath.endStationID;
+      } else {
+        // 환승 끝 (다른 역간 도보 이동 후 재탑승)
+        ({ defaultCost, cost, trainFlag, transferCnt } = calcTrainCost({
+          cost,
+          defaultCost,
+          transferCnt,
+          additionalTrainCostByStatNames,
+          startStationName: stationInfos[startStationId].stationName,
+          endStationName: stationInfos[endStationId].stationName,
+        }));
 
-      console.log(
-        "flag",
-        stationInfos[startStationId].stationName,
-        stationInfos[endStationId].stationName
-      );
+        // 다음 번 환승이 가능할 수도
+        startStationId = subPath.startStationID;
+        endStationId = subPath.endStationID;
+      }
+
       trainFlag = true;
     } else if (subPath.trafficType === BUS_CODE) {
+      if (trainFlag) {
+        ({ defaultCost, cost, trainFlag, transferCnt } = calcTrainCost({
+          cost,
+          defaultCost,
+          transferCnt,
+          additionalTrainCostByStatNames,
+          startStationName: stationInfos[startStationId].stationName,
+          endStationName: stationInfos[endStationId].stationName,
+        }));
+      }
+
       const busNo = subPath.lane[0].busNo;
 
       if (transferCnt % 5 === 0) {
@@ -2268,10 +2280,56 @@ const calcTransportCost = ({
       }
 
       cost += getAdditionalBusCost(dist);
+
+      transferCnt++;
     }
   }
 
   return cost;
+};
+
+const calcTrainCost = ({
+  cost,
+  defaultCost,
+  transferCnt,
+  additionalTrainCostByStatNames,
+  startStationName,
+  endStationName,
+}) => {
+  const TRAIN_DEFAULT_COST = 1250;
+
+  // 지하철 간의 환승은 다 끝남, 비용 계산하기
+  if (transferCnt % 5 === 0) {
+    // 기본 요금 지불 필요
+    defaultCost = TRAIN_DEFAULT_COST;
+    cost += defaultCost;
+  } else if (TRAIN_DEFAULT_COST > defaultCost) {
+    // 이전에 지불한 기본요금보다 비쌀 경우, 추가 비용 차감
+    cost += TRAIN_DEFAULT_COST - defaultCost;
+    defaultCost = TRAIN_DEFAULT_COST;
+  }
+
+  // 계산 -> 최단거리비례제도
+  // A -> B역으로 가는 최소 거리를 기준으로 비용 산출하게 됨
+  let adder = 0;
+  if (
+    startStationName in additionalTrainCostByStatNames &&
+    endStationName in additionalTrainCostByStatNames[startStationName]
+  ) {
+    adder = additionalTrainCostByStatNames[startStationName][endStationName];
+  } else if (
+    endStationName in additionalTrainCostByStatNames &&
+    startStationName in additionalTrainCostByStatNames[endStationName]
+  ) {
+    adder = additionalTrainCostByStatNames[endStationName][startStationName];
+  } else {
+    adder = TRAIN_DEFAULT_COST;
+  }
+
+  cost += adder - TRAIN_DEFAULT_COST;
+  transferCnt++;
+
+  return { defaultCost, cost, trainFlag: false, transferCnt };
 };
 
 const getBusDefaultCost = (busNo) => {
@@ -2302,7 +2360,7 @@ const getBusDefaultCost = (busNo) => {
 
 const getAdditionalBusCost = (dist) => {
   if (dist <= 10 * 1000) return 0;
-  return Math.floor(((dist - 10 * 1000) / (5 * 1000)) * 100); // 5km마다 100원 추가
+  return Math.floor((dist - 10 * 1000) / (5 * 1000)) * 100; // 5km마다 100원 추가
 };
 
 // *** 택시 비용 <-> 거리 관련 함수들
@@ -2313,7 +2371,7 @@ const getDistFromTaxiCost = ({ cost, arrTime }) => {
     return 1600;
   }
 
-  return Math.floor(((cost / extraPercentage - 4800) / 100) * 131 - 1600);
+  return Math.floor((cost / extraPercentage - 4800) / 100) * 131 - 1600;
 };
 
 const getTaxiCostFromDist = ({ dist, arrTime }) => {
@@ -2323,7 +2381,7 @@ const getTaxiCostFromDist = ({ dist, arrTime }) => {
     return 4800 * extraPercentage;
   }
 
-  return Math.floor((4800 + ((dist - 1600) / 131) * 100) * extraPercentage);
+  return Math.floor(4800 + (dist - 1600) / 131) * 100 * extraPercentage;
 };
 
 const calcExtraTaxiCostPercentage = (arrTime) => {
