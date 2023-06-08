@@ -1322,32 +1322,32 @@ const getEnableStationsFromDB = async () => {
       SELECT *
       FROM train_station
       `;
-    const sql_train_cost = `
-      SELECT *
-      FROM train_cost
-      `;
+    // const sql_train_cost = `
+    //   SELECT *
+    //   FROM train_cost
+    //   `;
     const sql_bus = `
       SELECT *
       FROM bus_station
       `;
 
-    const [train, train_cost, bus] = await Promise.all([
+    const [train, bus] = await Promise.all([
       conn.query(sql_train),
-      conn.query(sql_train_cost),
+      // conn.query(sql_train_cost),
       conn.query(sql_bus),
     ]);
 
     conn.release();
 
     // cost
-    for (const info of train_cost[0]) {
-      if (!(info.start_stat_name in additionalTrainCostByStatNames)) {
-        additionalTrainCostByStatNames[info.start_stat_name] = {};
-      }
+    // for (const info of train_cost[0]) {
+    //   if (!(info.start_stat_name in additionalTrainCostByStatNames)) {
+    //     additionalTrainCostByStatNames[info.start_stat_name] = {};
+    //   }
 
-      additionalTrainCostByStatNames[info.start_stat_name][info.end_stat_name] =
-        info.cost;
-    }
+    //   additionalTrainCostByStatNames[info.start_stat_name][info.end_stat_name] =
+    //     info.cost;
+    // }
 
     // geohash별로 station id 묶기
     for (const station of train[0]) {
