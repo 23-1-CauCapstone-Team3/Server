@@ -30,15 +30,15 @@ const findPath = async(req, res) => {
       }
     
     const userTime = dayjs(time);
-    
-    const [dayType, transport_base_date] = checkDateType(userTime)
+  
+    const [dayType, transport_base_date] = await checkDateType()
     const dayCode = dayType === 'day'? 1 : dayType === 'sat' ? 2 : 3
 
     /**
      * 버스, 도보 여유 시간
      */
     const bus_alpha = 2
-    const walk_alpha = 2
+    const walk_alpha = 3
 
 
     const routeResult = await axios.get(`https://api.odsay.com/v1/api/searchPubTransPathT?SX=${startX}`+
@@ -175,9 +175,9 @@ const findPath = async(req, res) => {
             const busLaneList = path[i].lane.map((element)=>{
               
               const stringKey = String(element.busLocalBlID)+'-'+String(path[i].startLocalStationID)+'-'+String(path[i].endLocalStationID)
-              console.log(stringKey)
-
+              
               if(bus_term_time[stringKey] !== undefined && bus_term_time[stringKey] !== null){
+                console.log(stringKey+" : "+ getDateValue(transport_base_date, bus_term_time[stringKey].time).format('YYYY-MM-DDTHH:mm:ss'))
                 return bus_term_time[stringKey]
               } else {
                 return null
@@ -202,21 +202,21 @@ const findPath = async(req, res) => {
             
             const busLastTime = bus_data.time
 
-            console.log(busLastTime)
+            console.log(getDateValue(transport_base_date, busLastTime).format('YYYY-MM-DDTHH:mm:ss'))
 
             // 이전 막차 시간보다 이후인 경우는 (걸리는 시간 + 알파) 값을 빼주고 이전 막차시간보다 이전인 경우는 새로 막차시간을 설정 후 (걸리는 시간 + 알파) 값을 빼 줌 
             if(busLastTime <= subLastPathTime) {
               console.log('버스: '+busLastTime, path[i].sectionTime, bus_data.term)
               subLastPathTime = busLastTime - (path[i].sectionTime + bus_data.term + bus_alpha)
             } else {
-              console.log('버스: '+busLastTime,path[i].sectionTime, bus_data.term)
+              console.log('이전 값: '+subLastPathTime, path[i].sectionTime, bus_data.term)
               subLastPathTime = subLastPathTime - (path[i].sectionTime + bus_data.term + bus_alpha)
             }
 
             // 마지막에 선택된 노선의 정보들을 저장해줌 
             path[i].busTerm = bus_data.term
             path[i].lane = path[i].lane.filter(element => element.busLocalBlID === String(bus_data.route_id))
-            path[i].lane.departureTime = getDateValue(transport_base_date, subLastPathTime)
+            path[i].lane.departureTime = getDateValue(transport_base_date, subLastPathTime).format('YYYY-MM-DDTHH:mm:ss')
 
           } else {
             console.log('지하철'+path[i].sectionTime)
@@ -252,7 +252,7 @@ const findPath = async(req, res) => {
               })
 
               if(endStationRail.length === 0){
-                console.log('도착역 길이 0')
+                console.log('도착역 길이: 0')
                 return null
               }
 
@@ -274,11 +274,11 @@ const findPath = async(req, res) => {
               })
 
               if(startStationLastRail.length === 0){
-                console.log('출발역 길이 0')
+                console.log('출발역 길이 : 0')
                 return null
               }
 
-              startStationLastRail.map((e)=>{console.log(e.time)})
+              startStationLastRail.map((e)=>{console.log("출발시간: "+e.time)})
                   
               const newLastPathTime = startStationLastRail.reduce((prev, now) => { 
                 if(prev.time > now.time) {
@@ -306,10 +306,10 @@ const findPath = async(req, res) => {
               }
             })
             
-            console.log('지하철 :'+lastTrainTimeInfo.newLastPathTime.time)
+            console.log('지하철 :'+getDateValue(transport_base_date, lastTrainTimeInfo.newLastPathTime.time).format('YYYY-MM-DDTHH:mm:ss') +"  "+getDateValue(transport_base_date, lastTrainTimeInfo.endStationLastRail.time).format('YYYY-MM-DDTHH:mm:ss'))
             subLastPathTime = lastTrainTimeInfo.newLastPathTime.time
-            path[i].lane[0].departureTime = getDateValue(transport_base_date, subLastPathTime)
-            path[i].lane[0].arrivalTime = getDateValue(transport_base_date, lastTrainTimeInfo.endStationLastRail.time)
+            path[i].lane[0].departureTime = getDateValue(transport_base_date, subLastPathTime).format('YYYY-MM-DDTHH:mm:ss')
+            path[i].lane[0].arrivalTime = getDateValue(transport_base_date, lastTrainTimeInfo.endStationLastRail.time).format('YYYY-MM-DDTHH:mm:ss')
               
           }
         }
@@ -336,7 +336,9 @@ const findPath = async(req, res) => {
       if(element === null){
         return false
       }
-      if(element.subLastPathTime > parseInt(userTime.format('HH'))*60 + parseInt(userTime.format('mm'))){
+      const pathTime = getDateValue(transport_base_date,element.subLastPathTime)
+      
+      if(pathTime.isAfter(userTime)){
         return true
       } else {
         return false
@@ -382,7 +384,7 @@ const findPath = async(req, res) => {
 
       } else if(path.trafficType === 2) {
 
-        path.lane[0].departureTime = getDateValue(transport_base_date, arrivalTime)
+        path.lane[0].departureTime = getDateValue(transport_base_date, arrivalTime).format('YYYY-MM-DDTHH:mm:ss')
         const term = bus_term_time[path.lane[0].busLocalBlID+'-'+path.startLocalStationID+'-'+path.endLocalStationID].term
         arrivalTime = arrivalTime+ (path.sectionTime + term + bus_alpha)
           
@@ -430,8 +432,8 @@ const findPath = async(req, res) => {
               }
             })
 
-            path.lane[0].arrivalTime = getDateValue(transport_base_date,endTimeInfo.time)
-            path.lane[0].departureTime = getDateValue(transport_base_date,startTimeInfo[i].time)
+            path.lane[0].arrivalTime = getDateValue(transport_base_date,endTimeInfo.time).format('YYYY-MM-DDTHH:mm:ss')
+            path.lane[0].departureTime = getDateValue(transport_base_date,startTimeInfo[i].time).format('YYYY-MM-DDTHH:mm:ss')
             arrivalTime = endTimeInfo.time
             break
           }
@@ -515,10 +517,9 @@ const findPath = async(req, res) => {
     
     return res.status(200).send({
       pathExistence: true,
-      arrivalTime: getDateValue(transport_base_date, arrivalTime),
-      departureTime: getDateValue(transport_base_date, lastPath.subLastPathTime), 
+      arrivalTime: getDateValue(transport_base_date, arrivalTime).format('YYYY-MM-DDTHH:mm:ss'),
+      departureTime: getDateValue(transport_base_date, lastPath.subLastPathTime).format('YYYY-MM-DDTHH:mm:ss'), 
       pathInfo: {pathType:lastPath.pathType, info:lastPath.info, subPath: lastPath.path}})
-    // return res.status(200).send({ result: true })
 
   } catch (err) {
     console.log(err)
@@ -528,7 +529,7 @@ const findPath = async(req, res) => {
 }
 
 function getDateValue(date, time){
-  return dayjs(date.format('YYYYMMDD') + String(parseInt(time/60)).padStart(2, '0') + String(time%60).padStart(2, '0'),'YYYYMMDDhhmm').format('YYYY-MM-DDTHH:mm:ss')
+  return dayjs(date.format('YYYYMMDD') + String(parseInt(time/60)).padStart(2, '0') + String(time%60).padStart(2, '0'),'YYYYMMDDhhmm')
 }
 
 async function getRailTimes(userTime, totalInfo, dayCode, transport_base_date) {
@@ -614,16 +615,15 @@ async function getBusData(userTime, totalInfo, dayType, transport_base_date){
 
       const busTimeList = await Promise.all(totalInfo.map(async (element) => {
 
-        console.log(element)
         const termSQL = `SELECT route_id , ${dayType} as term FROM bus_term WHERE route_id = ${element.busLocalBlID};`
         const term_result = await selectDataWithQuery(termSQL)
 
         if(term_result === undefined || term_result === null || term_result.length === 0){
-          console.log("배차 존재1")
+          console.log("배차 존재 안함")
           return {start_id: element.startLocalStationID, end_id :element.endLocalStationID, route_id: element.busLocalBlID, term: null, time: null}
         }
         if(term_result[0].term === -1 || term_result[0].term === null || term_result[0].term === undefined){
-          console.log("배차 존재2")
+          console.log("배차 존재 하지만 없는 값 취급")
           return {start_id: element.startLocalStationID, end_id :element.endLocalStationID, route_id: element.busLocalBlID, term: null, time: null}
         }
 
@@ -632,7 +632,7 @@ async function getBusData(userTime, totalInfo, dayType, transport_base_date){
         let bus_time_result = await selectDataWithQuery(busTimeSQL)
 
         if(bus_time_result === undefined || bus_time_result === null || bus_time_result.length === 0){
-          console.log("시간 존재1")
+          console.log("버스 시간 존재하지 않음")
           return {start_id: element.startLocalStationID, end_id:element.endLocalStationID, route_id: element.busLocalBlID, term: null, time: null}
         }
 
@@ -649,7 +649,7 @@ async function getBusData(userTime, totalInfo, dayType, transport_base_date){
         }
 
         if(startBusInfo === null){
-          console.log("시간 존재2")
+          console.log("원하는 버스 정보 못얻음")
           return {start_id: element.startLocalStationID, end_id:element.endLocalStationID, route_id: element.busLocalBlID, term: null, time: null}
         }
 
@@ -664,58 +664,7 @@ async function getBusData(userTime, totalInfo, dayType, transport_base_date){
             final_time_result[String(element.route_id)+'-'+String(element.start_id)+'-'+String(element.end_id)] = null
           }
         })
-
-      // /**
-      //  * 디비에서 버스 배차 정보를 찾아 주는 과정
-      //  */
-      // const len = totalInfo.length-1
-      // let term_sql = `SELECT route_id , ${dayType} as term FROM bus_term WHERE`
-      // totalInfo.forEach((element, index) => {
-      //   if (index === len){
-      //     term_sql +=` route_id = ${element.busLocalBlID};`
-      //   } else {
-      //     term_sql +=` route_id = ${element.busLocalBlID} OR`
-      //   }
-      // })
-      
-      // const term_result = await selectDataWithQuery(term_sql) 
-      
-      // let bus_time_sql = 'SELECT stat_id, route_id, time FROM bus_last_time WHERE'
-      // totalInfo.forEach((element, index) => {
-      //   if (index === len){
-      //     bus_time_sql +=` (route_id = ${element.busLocalBlID} AND stat_id =${element.startLocalStationID});`
-      //   } else {
-      //     bus_time_sql +=` (route_id = ${element.busLocalBlID} AND stat_id =${element.startLocalStationID}) OR`
-      //   }
-      // })
-
-      // const temp_result = await selectDataWithQuery(bus_time_sql)
-
-      // const bus_time_result = temp_result.map((element)=>{
-      //   if(element.time === null || element.time === undefined){
-      //     return {stat_id: element.stat_id, route_id: element.route_id, time: null}
-      //   }
-      //   return {stat_id: element.stat_id, route_id: element.route_id, time: element.time}
-      // })
-
-      // const final_term_result = {}
-      // term_result.forEach((element) => {
-      //   if(element.term !== null && element.term !== undefined && element.term !== -1){
-      //     final_term_result[element.route_id] = element.term
-      //   } else {
-      //     final_term_result[element.route_id] = null
-      //   }
-      // })
-      
-      // const final_time_result = {}
-      // bus_time_result.forEach((element)=>{
-      //   if(element.time !== null && element.time !== undefined && final_term_result[element.route_id] !== undefined && final_term_result[element.route_id] !== null){
-      //     final_time_result[String(element.stat_id)+'-'+String(element.route_id)] = {stat_id: element.stat_id, route_id: element.route_id, term: final_term_result[element.route_id], time: element.time}
-      //   } else {
-      //     final_time_result[element.route_id] = null
-      //   }
-      // })
-
+      console.log('++++++++++++++++++++++++++')
       return final_time_result
     } else {
       return null
@@ -743,25 +692,18 @@ async function selectDataWithQuery(sql){
 }
 
 
-function checkDateType(userTime){
+async function checkDateType(){
   
-  let date
-  /**
-   * 유저의 시간이 새벽 1시인 경우 버스는 그 전날의 요일이 무엇인지에 따라 배차간격등이 정해짐
-   * 그래서 요일을 확인 하기 위해서는 24시 이전과 이후를 구분해야함
-   * 새벽 4시를 기준으로 작으면 이전 날짜를 21시면 해당 날짜를 생성해 줌
-   */
-  if(parseInt(userTime.get('h')) <= 4){
-    date = userTime.subtract(1,'d')
-  } else {
-    date = userTime
-  }
+  const transportDate = await selectDataWithQuery('select * from now_date')
+  const holidayList = await selectDataWithQuery('select * from holiday')
   
-  let day_type = date.day() === 0 ? 'holiday' : date.day() === 6 ? 'sat' : 'day'
-  const solar_holiday = ['0101', '0301', '0505','0606','0815','1003','1009','1225']
-  const lunar_holiday = ['0527','0928','0929','0930']
+  const date = dayjs(transportDate[0].date,'YYYYMMDD')
 
-  if(solar_holiday.includes(date.format('MMDD')) || lunar_holiday.includes(date.format('MMDD'))){
+  let day_type = date.day() === 0 ? 'holiday' : date.day() === 6 ? 'sat' : 'day'
+  
+  const hoildayCheck = holidayList.filter((element)=>{element.date === date.format('YYYYMMDD')})
+
+  if(hoildayCheck.length > 0){
     day_type = 'holiday'
   }
 
