@@ -275,22 +275,22 @@ const findTaxiPath = async (req, res) => {
       return;
     }
 
-    console.log("실시간 정보 추가");
-    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    paths = await addRealtimeInfos({
-      startDate,
-      paths: [paths[0]],
-      additionalTrainCostByStatNames,
-      stationInfos,
-    });
-    console.log("실시간 정보 추가 완료");
+    // console.log("실시간 정보 추가");
+    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    // paths = await addRealtimeInfos({
+    //   startDate,
+    //   paths: [paths[0]],
+    //   additionalTrainCostByStatNames,
+    //   stationInfos,
+    // });
+    // console.log("실시간 정보 추가 완료");
 
     console.log("API 호출 종료");
     res.send({
       pathExistence: true,
       departureTime: paths[0].info.departureTime,
       arrivalTime: paths[0].info.arrivalTime,
-      pathInfo: paths,
+      pathInfo: paths[0],
     });
   } catch (err) {
     console.log(err);
@@ -494,6 +494,7 @@ const raptorAlg = ({
 
           // 그냥 이전 trip으로 계속 진행
           if (newTrip == null) continue;
+          if (trip[i].arrTime <= newTrip[newInd].arrTime) continue;
 
           // console.log(
           //   trip[i].arrTime,
