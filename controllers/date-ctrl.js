@@ -10,8 +10,7 @@ const saveDate = async () => {
   console.log('date 스케쥴 시작')
   const nowTime = dayjs()
 
-  if(parseInt(nowTime.get("h")) >= 10 && parseInt(nowTime.get("h")) < 21){
-    console.log('asdfasfd')
+  if(parseInt(nowTime.get("h")) >= 9 && parseInt(nowTime.get("h")) < 21){
     await setHoliday()
     await setNowTime()
   }
