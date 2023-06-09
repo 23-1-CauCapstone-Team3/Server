@@ -16,7 +16,7 @@ const DEFAULT_WALKING_UNIT = 50,
 const DEFAULT_MAX_TRANSFER = 3;
 const DEFAULT_MAX_COST = 35000;
 const DEFAULT_MAX_WALKING = 45;
-const DEFAULT_MAX_WALKING_PER_STEP = 35;
+const DEFAULT_MAX_WALKING_PER_STEP = 40;
 const WALKING_ROUTE_ID = "walking";
 const TAXI_ROUTE_ID = "taxi";
 
@@ -268,7 +268,6 @@ const findTaxiPath = async (req, res) => {
 
     if (paths.length === 0) {
       // 어떠한 경로도 없는 경우
-
       console.log("API 호출 종료");
       res.send({
         pathExistence: false,
@@ -291,7 +290,7 @@ const findTaxiPath = async (req, res) => {
       pathExistence: true,
       departureTime: paths[0].info.departureTime,
       arrivalTime: paths[0].info.arrivalTime,
-      pathInfo: paths[0],
+      pathInfo: paths,
     });
   } catch (err) {
     console.log(err);
@@ -416,6 +415,7 @@ const raptorAlg = ({
       let prevId = null,
         prevArrTime = null;
 
+      let cycleCheckedSet = new Set();
       for (let i = startStationInd + 1; i <= lastStationInd; i++) {
         if (trip[i].stationId == prevId) continue; // 중복역 pass
         if (!(trip[i].stationId in stationInfos)) continue; // DB에 존재하지 않는 역정보 pass
@@ -474,20 +474,15 @@ const raptorAlg = ({
           markedStations.add(trip[i].stationId);
         }
 
-        prevArrTime = trip[i].arrTime;
-
         // 더 빠른 시간에 열차 탑승이 가능한 경우 (이번역에 이 전 시간에 도착한 기록이 있는 경우),
         // 이전 시간에 대한 trip을 사용해서 이동하도록 함
-        // but 그냥 이전에 이거보다 빨리 도착했으면 그냥 for 탈출하는게 이득일 것
         if (
           transportNum > 0 &&
           trip[i].stationId in reachedInfos[transportNum - 1] &&
           reachedInfos[transportNum - 1][trip[i].stationId].arrTime <
             trip[i].arrTime &&
-          i != trip.findIndex((el) => el.stationId == trip[i].stationId)
-          // TODO: 순환 노선 해결
-          // index가 여러 개 있을 때, 같고 다름에 따라 처리 다르게 해주어야 함
-          // 이걸 빼면 노들역에서 탐 (대신 삼선에서는 X), 넣으면 반대로 삼선에서 탐
+          !cycleCheckedSet.has(trip[i].stationId)
+          // && i != trip.findIndex((el) => el.stationId == trip[i].stationId)
         ) {
           const { trip: newTrip, startStationInd: newInd } = getNowTrip({
             route,
@@ -496,12 +491,16 @@ const raptorAlg = ({
             term: route in busRouteInfos ? busRouteInfos[route].term : -1,
             arrTime: reachedInfos[transportNum - 1][trip[i].stationId].arrTime,
           });
-          // // startStation, startStationInd 변경 필요
-          // console.log(trip, checkIsBusStation(trip[i].stationId));
 
           // 그냥 이전 trip으로 계속 진행
           if (newTrip == null) continue;
 
+          // console.log(
+          //   trip[i].arrTime,
+          //   trip.find((el) => el.stationId == trip[i].stationId).arrTime,
+          //   newTrip[newInd].arrTime,
+          //   reachedInfos[transportNum - 1][trip[i].stationId].arrTime
+          // );
           // console.log(
           //   trip[i].stationId,
           //   route,
@@ -515,7 +514,12 @@ const raptorAlg = ({
           i = newInd;
           startStation = trip[i].stationId;
           lastStationInd = trip.length - 1;
+
+          cycleCheckedSet.add(startStation);
         }
+
+        prevArrTime = trip[i].arrTime;
+        prevId = trip[i].stationId;
       }
     }
 
@@ -883,103 +887,103 @@ const selectAndSortPaths = ({
   maxWalking,
   isIncludeTaxi,
 }) => {
-  // 1. 지났던 역 중복으로 지나는 경로 추려내기
-  paths.filter((path) => {
-    const middleStationSet = new Set(),
-      startStationSet = new Set(),
-      endStationSet = new Set();
+  // // 1. 지났던 역 중복으로 지나는 경로 추려내기
+  // paths.filter((path) => {
+  //   const middleStationSet = new Set(),
+  //     startStationSet = new Set(),
+  //     endStationSet = new Set();
 
-    for (const subPath of path.subPath) {
-      if (
-        !(
-          subPath.trafficType === BUS_CODE || subPath.trafficType === TRAIN_CODE
-        )
-      )
-        continue;
+  //   for (const subPath of path.subPath) {
+  //     if (
+  //       !(
+  //         subPath.trafficType === BUS_CODE || subPath.trafficType === TRAIN_CODE
+  //       )
+  //     )
+  //       continue;
 
-      // 대중교통 탈 때, 동일 역을 이전에 지난 적 있으면 안 됨 (반복하여 동일 역 지나가는 비효율적인 경로)
-      // or, 전 단계에서 이미 endStation에 포함된 역 있다면 drop
-      for (let j = 0; j < subPath.passStopList.stations.length; j++) {
-        const station =
-          subPath.trafficType === BUS_CODE
-            ? subPath.passStopList.stations[j].localStationID
-            : subPath.passStopList.stations[j].stationID;
-        if (
-          middleStationSet.has(station) ||
-          // 출발-도착역 pair의 경우 문제 X
-          (j == 0 && startStationSet.has(station)) ||
-          (j == subPath.passStopList.stations.length - 1 &&
-            endStationSet.has(station)) ||
-          (!(j == 0 || j == subPath.passStopList.stations.length - 1) &&
-            (startStationSet.has(station) || endStationSet.has(station)))
-        ) {
-          return false;
-        }
+  //     // 대중교통 탈 때, 동일 역을 이전에 지난 적 있으면 안 됨 (반복하여 동일 역 지나가는 비효율적인 경로)
+  //     // or, 전 단계에서 이미 endStation에 포함된 역 있다면 drop
+  //     for (let j = 0; j < subPath.passStopList.stations.length; j++) {
+  //       const station =
+  //         subPath.trafficType === BUS_CODE
+  //           ? subPath.passStopList.stations[j].localStationID
+  //           : subPath.passStopList.stations[j].stationID;
+  //       if (
+  //         middleStationSet.has(station) ||
+  //         // 출발-도착역 pair의 경우 문제 X
+  //         (j == 0 && startStationSet.has(station)) ||
+  //         (j == subPath.passStopList.stations.length - 1 &&
+  //           endStationSet.has(station)) ||
+  //         (!(j == 0 || j == subPath.passStopList.stations.length - 1) &&
+  //           (startStationSet.has(station) || endStationSet.has(station)))
+  //       ) {
+  //         return false;
+  //       }
 
-        if (j == 0) startStationSet.add(station);
-        else if (j == subPath.passStopList.stations.length - 1)
-          endStationSet.add(station);
-        else middleStationSet.add(station);
-      }
-    }
+  //       if (j == 0) startStationSet.add(station);
+  //       else if (j == subPath.passStopList.stations.length - 1)
+  //         endStationSet.add(station);
+  //       else middleStationSet.add(station);
+  //     }
+  //   }
 
-    return true;
-  });
+  //   return true;
+  // });
 
-  // 2. 동일 노선 연속으로 또 타는 문제 해결
-  // + 도보/택시 -> 도보/택시 경로 추려내기
-  paths = paths.filter((path) => {
-    const notTransportType = new Set([
-      TAXI_CODE,
-      WALKING_CODE,
-      TRANSFER_WALKING_CODE,
-    ]);
+  // // 2. 동일 노선 연속으로 또 타는 문제 해결
+  // // + 도보/택시 -> 도보/택시 경로 추려내기
+  // paths = paths.filter((path) => {
+  //   const notTransportType = new Set([
+  //     TAXI_CODE,
+  //     WALKING_CODE,
+  //     TRANSFER_WALKING_CODE,
+  //   ]);
 
-    let prevTransportRouteType = null,
-      prevTransportRouteName = null,
-      prevRouteType = null;
+  //   let prevTransportRouteType = null,
+  //     prevTransportRouteName = null,
+  //     prevRouteType = null;
 
-    for (const subPath of path.subPath) {
-      // 도보
-      if (
-        prevTransportRouteName !== null &&
-        notTransportType.has(prevRouteType) &&
-        notTransportType.has(subPath.trafficType)
-      ) {
-        return false;
-      }
+  //   for (const subPath of path.subPath) {
+  //     // 도보
+  //     if (
+  //       prevTransportRouteName !== null &&
+  //       notTransportType.has(prevRouteType) &&
+  //       notTransportType.has(subPath.trafficType)
+  //     ) {
+  //       return false;
+  //     }
 
-      prevRouteType = subPath.trafficType;
+  //     prevRouteType = subPath.trafficType;
 
-      // 대중교통 관련된 조건 확인 code
-      if (
-        !(
-          subPath.trafficType === BUS_CODE || subPath.trafficType === TRAIN_CODE
-        )
-      )
-        continue;
+  //     // 대중교통 관련된 조건 확인 code
+  //     if (
+  //       !(
+  //         subPath.trafficType === BUS_CODE || subPath.trafficType === TRAIN_CODE
+  //       )
+  //     )
+  //       continue;
 
-      if (
-        prevTransportRouteName !== null &&
-        (prevTransportRouteType === subPath.trafficType &&
-        prevTransportRouteName == (subPath.trafficType === BUS_CODE)
-          ? subPath.lane[0].busNo
-          : subPath.lane[0].name)
-      ) {
-        return false;
-      }
+  //     if (
+  //       prevTransportRouteName !== null &&
+  //       (prevTransportRouteType === subPath.trafficType &&
+  //       prevTransportRouteName == (subPath.trafficType === BUS_CODE)
+  //         ? subPath.lane[0].busNo
+  //         : subPath.lane[0].name)
+  //     ) {
+  //       return false;
+  //     }
 
-      prevTransportRouteType = subPath.trafficType;
-      prevTransportRouteName =
-        subPath.trafficType === BUS_CODE
-          ? subPath.lane[0].busNo
-          : subPath.lane[0].name;
-    }
+  //     prevTransportRouteType = subPath.trafficType;
+  //     prevTransportRouteName =
+  //       subPath.trafficType === BUS_CODE
+  //         ? subPath.lane[0].busNo
+  //         : subPath.lane[0].name; // TODO: 그거로 만들기... id값으로 바꿔서 + 같은역에서 다른차타는거 허용해주기
+  //   }
 
-    return true;
-  });
+  //   return true;
+  // });
 
-  // TODO: 중복 노선 제거 (출발 -> 끝 역만 미세하게 다르고 동일 노선 타는 수많은 case들)
+  // // TODO: 중복 노선 제거 (출발 -> 끝 역만 미세하게 다르고 동일 노선 타는 수많은 case들)
 
   // 3. 최대 도보 넘는 거 제거
   paths = paths.filter((path) => {
@@ -988,20 +992,20 @@ const selectAndSortPaths = ({
 
   // 4. 정렬
   paths.sort((path1, path2) => {
-    // 1. (isIncludeTaxi = true인 경우) 택시비 최소
-    if (
-      isIncludeTaxi &&
-      Math.abs(path1.info.taxiPayment - path2.info.taxiPayment) > 1000
-    )
-      return path1.info.taxiPayment - path2.info.taxiPayment;
+    // // 1. (isIncludeTaxi = true인 경우) 택시비 최소
+    // if (
+    //   isIncludeTaxi &&
+    //   Math.abs(path1.info.taxiPayment - path2.info.taxiPayment) > 1500
+    // )
+    //   return path1.info.taxiPayment - path2.info.taxiPayment;
 
-    // 2. 택시비 동일한 경우, 더 빠른 도착시간
-    if (Math.abs(path1.info.totalTime - path2.info.totalTime) > 10)
-      return path1.info.totalTime - path2.info.totalTime;
+    // // 2. 택시비 동일한 경우, 더 빠른 도착시간
+    // if (Math.abs(path1.info.totalTime - path2.info.totalTime) > 12)
+    //   return path1.info.totalTime - path2.info.totalTime;
 
-    // 3. 시간 동일한 경우, 적은 도보
-    if (Math.abs(path1.info.totalWalkTime - path2.info.totalWalkTime) > 5)
-      return path1.info.totalWalkTime - path2.info.totalWalkTime;
+    // // 3. 시간 동일한 경우, 적은 도보
+    // if (Math.abs(path1.info.totalWalkTime - path2.info.totalWalkTime) > 10)
+    //   return path1.info.totalWalkTime - path2.info.totalWalkTime;
 
     // 1. (isIncludeTaxi = true인 경우) 택시비 최소
     if (isIncludeTaxi && path1.info.taxiPayment != path2.info.taxiPayment)
@@ -1694,15 +1698,15 @@ const getTrainCode = (trainRouteName) => {
   const routeName = getTrainRouteName(trainRouteName);
 
   const trainCodeDict = {
-    "수도권 1호선": 1,
-    "수도권 2호선": 2,
-    "수도권 3호선": 3,
-    "수도권 4호선": 4,
-    "수도권 5호선": 5,
-    "수도권 6호선": 6,
-    "수도권 7호선": 7,
-    "수도권 8호선": 8,
-    "수도권 9호선": 9,
+    "1호선": 1,
+    "2호선": 2,
+    "3호선": 3,
+    "4호선": 4,
+    "5호선": 5,
+    "6호선": 6,
+    "7호선": 7,
+    "8호선": 8,
+    "9호선": 9,
     공항철도: 101,
     자기부상철도: 102,
     경의중앙선: 104,
@@ -1757,7 +1761,8 @@ const getNowTrip = ({ route, trip, station, term = 15, arrTime }) => {
     if (diff < 0) return { trip: null };
     // diff가 배차 간격보다 크게 차이나는 경우, 막차가 아닌 다른 차 타게 됨
     // (즉, 정확히 언제 차가 도착하는지 확신하기 어려움, 이 경우 최대 term만큼을 대기한 뒤 버스를 탑승하게 될 것)
-    if (diff > term) diff -= term;
+
+    if (diff >= term) diff -= term;
 
     // 2. 정류장에 도착한 뒤, 배차 간격만큼 대기 후 오는 차를 타도록 함
     // 이때, 배차 간격을 기다릴 필요 없음
@@ -2020,6 +2025,10 @@ const getCircleStations = ({
 
     for (const neighbor of neighbors) {
       const nowStations = {};
+
+      if (neighbor == hash) {
+        console.log("hash 겹침");
+      }
 
       if (!geohashes.has(neighbor)) {
         geohashes.add(neighbor);

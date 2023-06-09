@@ -1,6 +1,6 @@
 const express = require("express");
 const app = express();
-const { pathRouter } = require('./routes/pathRouter');
+const { pathRouter } = require("./routes/pathRouter");
 const { taxiPathRouter } = require("./routes/taxiPathRouter");
 const { saveDate } = require("./controllers/date-ctrl");
 const port = 3000;
@@ -16,7 +16,7 @@ const server = async () => {
     app.use("/taxiRoute", taxiPathRouter);
 
     app.listen(port, () => {
-      saveDate()
+      // saveDate()
       console.log(`App listening on port ${port}`);
     });
   } catch (error) {
