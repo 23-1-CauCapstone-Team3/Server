@@ -275,15 +275,15 @@ const findTaxiPath = async (req, res) => {
       return;
     }
 
-    // console.log("실시간 정보 추가");
-    // // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
-    // paths = await addRealtimeInfos({
-    //   startDate,
-    //   paths: [paths[0]],
-    //   additionalTrainCostByStatNames,
-    //   stationInfos,
-    // });
-    // console.log("실시간 정보 추가 완료");
+    console.log("실시간 정보 추가");
+    // 6. 추려낸 path에 대해 도보, 택시 정보 추가 및 값 보정
+    paths = await addRealtimeInfos({
+      startDate,
+      paths: [paths[0]],
+      additionalTrainCostByStatNames,
+      stationInfos,
+    });
+    console.log("실시간 정보 추가 완료");
 
     console.log("API 호출 종료");
     res.send({
@@ -1244,7 +1244,7 @@ const updateTime = ({
 }) => {
   let newDepartureTime = departureTime + diff;
   let newArrivalTime = newDepartureTime + sectionTime;
-  diff += newArrivalTime - arrivalTime; // 즉, 실제 지연되는 시간 (더해줘야 함)
+  diff = newArrivalTime - arrivalTime; // 즉, 실제 지연되는 시간 (더해줘야 함)
 
   newDepartureTime = getDateStrFromTime({
     time: newDepartureTime,
