@@ -45,7 +45,7 @@ const findTaxiPath = async (req, res) => {
     console.log("API 호출 시작");
 
     // parameter check
-    if (!time || !startX || !startY || !endX || !endY) {
+    if (!startDate || !startLat || !startLng || !endLat || !endLng) {
       return res
         .status(400)
         .send({ error: "Request parameters are incorrect", result: false });
