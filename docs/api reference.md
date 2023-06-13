@@ -1,16 +1,15 @@
-# Server
-## API reference
+# API reference
 
-### 대중교통 최종 막차 시간 및 경로 탐색
-#### HTTP method
+## 대중교통 최종 막차 시간 및 경로 탐색
+### HTTP method
 
 `get`
 
-#### url
+### url
 
 `http://52.78.214.66:3000/route/getLastTimeAndPath`
 
-#### parameters
+### parameters
 
 1. query params
 
@@ -22,7 +21,7 @@
    | endY               | float  | O        |           | 도착지의 Y좌표 (위도)                                  |
    | time               | string | O        |   | 현재 시간 <br>(2023-05-22T20:40:00) |
 
-#### response (type: `json`)
+### response (type: `json`)
 
 ```
 {
@@ -107,18 +106,17 @@
     }
 }
 ```
+## 택시를 포함한 대중교통 길찾기
 
-### 택시를 포함한 대중교통 길찾기
-
-####  HTTP method
+### HTTP method
 
 `get`
 
-####  url
+### url
 
 `http://52.78.214.66:3000/taxiRoute/findTaxiPath`
 
-####  parameters
+### parameters
 
 1. query params
 
@@ -136,7 +134,7 @@
    | maxTotalWalkTime   | int    | X        | 40        | 최대 총 도보 이동 시간                                 |
    | maxWalkTimePerStep | int    | X        | 20        | 한 번의 도보 이동에 대한 최대 도보 이동 시간           |
 
-#### response (type: `json`)
+### response (type: `json`)
 
 ```
 {
@@ -215,25 +213,3 @@
     }
 }
 ```
-
-## 브랜치 관리 규칙
-
-- `master` : 정식 배포용
-- `develop` : 다음 버전 개발용
-    - `master`에서 분기, 작업 후 `master`로 병합
-- `feature/기능명` : 특정 기능 개발용
-    - `develop`에서 분기, 작업 후 `develop`으로 병합
-- `hotfix` : `master` 브랜치의 오류 수정용
-    - `master`에서 분기, 작업 후 `master`로 병합
-
-## 커밋 메세지 규칙
-제목 작성 시, 커밋 유형에 맞는 `[Type]`을 앞에 붙여주세요. 
-
-- `[FEAT ADD/UPDATE/REMOVE]` 기능 추가/수정/삭제
-- `[FIX]` 버그 수정
-- `[DOCS]` 문서 수정
-- `[STYLE]` 코드 포맷팅
-- `[REFACTOR]` 코드 리팩토링
-- `[TEST]` 테스트 코드
-- `[BUILD]` 빌드 파일 수정
-- `[CHORE]` 기타 파일 수정
