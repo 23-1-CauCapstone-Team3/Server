@@ -26,7 +26,7 @@
    | maxTotalWalkTime   | int    | X        | 40        | 최대 총 도보 이동 시간                                 |
    | maxWalkTimePerStep | int    | X        | 20        | 한 번의 도보 이동에 대한 최대 도보 이동 시간           |
 
-### responce (type: json)
+### response (type: json)
 
 ```
 {
