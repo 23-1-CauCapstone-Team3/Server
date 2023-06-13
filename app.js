@@ -16,7 +16,7 @@ const server = async () => {
     app.use("/taxiRoute", taxiPathRouter);
 
     app.listen(port, () => {
-      // saveDate()
+      saveDate()
       console.log(`App listening on port ${port}`);
     });
   } catch (error) {
