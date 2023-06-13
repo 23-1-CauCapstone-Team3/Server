@@ -22,7 +22,7 @@
    | endY               | float  | O        |           | 도착지의 Y좌표 (위도)                                  |
    | time               | string | O        |   | 현재 시간 <br>(2023-05-22T20:40:00) |
 
-### response (type: `json`)
+#### response (type: `json`)
 
 ```
 {
